@@ -1,1 +1,1 @@
-LibreCuts is a free, open-source privacy friendly video editor for Android.
+AIO VD Editor is a free, open-source privacy friendly video editor for Android.

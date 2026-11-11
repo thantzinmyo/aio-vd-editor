@@ -1,6 +1,6 @@
-<p>LibreCuts is a free and open-source video editor for Android focused on simplicity, performance, and privacy. Edit and export watermark free videos entirely on your device.</p>
+<p>AIO VD Editor is a free and open-source video editor for Android by AIO HUB PSM, focused on simplicity, performance, and privacy. Edit and export watermark free videos entirely on your device.</p>
 
-<p><b>Note:</b> LibreCuts is currently in beta. You may encounter bugs, instability, or incomplete features as development continues.</p>
+<p><b>Note:</b> AIO VD Editor is currently in beta. You may encounter bugs, instability, or incomplete features as development continues.</p>
 
 <p><b>Features</b></p>
 
@@ -11,7 +11,10 @@
 <li><b>Subtitles:</b> Import .srt subtitle files and reposition captions in the preview.</li>
 <li><b>Layer Management:</b> Reorder overlay layers.</li>
 <li><b>Audio:</b> Import audio, boost volume up to 200%, or mute the original audio.</li>
+<li><b>Ratio:</b> CapCut-style canvas ratios (Original, 9:16, 16:9, 1:1, 4:3, 3:4, 5:8") with pinch to zoom and drag; blurred canvas background fills the empty areas.</li>
 <li><b>Crop:</b> Crop videos to custom aspect ratios.</li>
+<li><b>Blur Box:</b> Add as many draggable, resizable blurred rectangles as you want.</li>
+<li><b>Myanmar font:</b> Bundled Noto Sans Myanmar with correct shaping in preview and export.</li>
 <li><b>Transitions:</b> Add smooth transitions between clips.</li>
 <li><b>Speed:</b> Speed up or slow down videos.</li>
 <li><b>Adjust &amp; Filters:</b> Adjust brightness, contrast, saturation, and apply filters.</li>

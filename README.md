@@ -14,7 +14,8 @@ subtitle backgrounds, Myanmar font support, and export in 720p / 1080p / 2K / 4K
 - **Subtitles** — import `.srt` files, with an optional blurred background behind the text
 - **Text overlays** — unlimited text, custom `.ttf` / `.otf` fonts, keyframes, layers
 - **Myanmar font** — bundled Noto Sans Myanmar (OFL); Myanmar text is rendered with correct shaping in preview and export
-- **Ratio / Crop** — change the video aspect ratio
+- **Ratio** — CapCut-style: pick Original, 9:16, 16:9, 1:1, 4:3, 3:4 or 5:8", then pinch to zoom and drag the video inside the canvas; empty areas take the canvas background (blur / colour / image)
+- **Crop** — cut the video to a custom rectangle
 - **Effects & Adjust** — brightness, contrast, saturation, colour filters
 - **Audio** — music, voice-over, ducking, fades, volume up to 200%
 - **Export resolution** — Original, 720p, 1080p, 2K, 4K (applied to the video's long edge, so portrait 1080p exports as 1080×1920)
@@ -29,16 +30,14 @@ subtitle backgrounds, Myanmar font support, and export in 720p / 1080p / 2K / 4K
 
 Requires Android Studio and the Android SDK.
 
-## Credits
+## Contact
 
-Built on [LibreCuts](https://github.com/tharunbirla/LibreCuts) by Tharun Birla
-(MIT License, see `LICENSE`). AIO VD Editor adds blur boxes, subtitle blur,
-Myanmar shaping-safe export, export resolutions, drafts history, and the
-gold/black AIO HUB PSM branding.
+- Telegram Channel: https://t.me/aiohubpsmshop
+- Admin: https://t.me/DoubleT2245
 
 Myanmar font: Noto Sans Myanmar, SIL Open Font License 1.1
 (see `app/src/main/assets/fonts/NotoSansMyanmar-OFL.txt`).
 
 ## License
 
-MIT License — see `LICENSE`.
+MIT License — Copyright (c) 2026 AIO HUB PSM, see `LICENSE`.
