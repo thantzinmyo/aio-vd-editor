@@ -8,6 +8,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
@@ -77,7 +78,11 @@ data class GpuExportParams(
  * onto the same onProgress / notification / broadcast wiring the FFmpeg
  * path uses, so the export screen, notification and done screen are
  * unchanged.
+ *
+ * The Media3 Transformer API is marked @UnstableApi, so this class opts
+ * in to it (the API surface we use has been stable since 1.9.0).
  */
+@OptIn(UnstableApi::class)
 class GpuExportEngine(private val context: Context) {
 
     sealed interface Result {
