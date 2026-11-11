@@ -22,6 +22,7 @@ import com.tharunbirla.librecuts.VideoEditingActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -35,6 +36,10 @@ class ExportService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private lateinit var ffmpegEngine: FFmpegRenderEngine
     private lateinit var gpuEngine: GpuExportEngine
+    /** Set by the Cancel action (a separate onStartCommand call) so the
+     * watchdog and the GPU→FFmpeg fallback can tell a user cancel apart
+     * from a stall. Reset at the start of every export. */
+    private val userCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
 
     companion object {
         const val ACTION_EXPORT_PROGRESS = "com.tharunbirla.librecuts.ACTION_EXPORT_PROGRESS"
@@ -71,6 +76,10 @@ class ExportService : Service() {
         const val EXTRA_GPU_CANVAS_BLUR = "extra_gpu_canvas_blur"
         const val EXTRA_GPU_CANVAS_SCALE = "extra_gpu_canvas_scale"
         const val EXTRA_GPU_OVERLAYS = "extra_gpu_overlays"
+        /** FFmpeg command the service falls back to if the GPU export
+         * fails or stalls (same temp output — the command starts with
+         * -y, so a partial GPU file is overwritten safely). */
+        const val EXTRA_FALLBACK_COMMAND = "extra_fallback_command"
     }
 
     /** One outcome shape for both engines, so the save / notify / broadcast tail is shared. */
@@ -97,16 +106,19 @@ class ExportService : Service() {
         // GPU engine is running (FFmpegKit.cancel is global, so it covers
         // the FFmpeg path on its own; the Transformer needs a direct call).
         if (intent.action == ACTION_CANCEL_EXPORT) {
+            userCancelled.set(true)
             if (::gpuEngine.isInitialized) gpuEngine.cancel()
             serviceScope.launch { ffmpegEngine.cancelAllSessions() }
             return START_NOT_STICKY
         }
 
+        userCancelled.set(false)
         val useGpu = intent.getBooleanExtra(EXTRA_USE_GPU, false)
         val tempOutputPath = intent.getStringExtra(EXTRA_TEMP_OUTPUT_PATH) ?: return START_NOT_STICKY
         val concatFilePath = intent.getStringExtra(EXTRA_CONCAT_FILE_PATH)
         val durationSecs = intent.getDoubleExtra(EXTRA_TOTAL_DURATION_SECS, 0.0)
         val isAudioOnly = intent.getBooleanExtra(EXTRA_IS_AUDIO_ONLY, false)
+        val fallbackCommand = intent.getStringExtra(EXTRA_FALLBACK_COMMAND)
 
         // FFmpeg path still needs the command; the GPU path does not use
         // it ("" is a placeholder that is never read — using null here
@@ -119,26 +131,28 @@ class ExportService : Service() {
 
         serviceScope.launch {
             // Watchdog: an export that reports no progress at all within
-            // 90 seconds is wedged — it happened on-device (export screen
-            // stuck at 0.0% forever, no toast missed, no error, no finish,
-            // no notification progress). Without this the user is left
-            // staring at 0% with no way out. On firing, the running
-            // engine is cancelled and the outcome is reported as a stall
-            // (not a user cancel), so the editor shows a real error and
-            // the user can retry instead of waiting forever.
-            val startedAtMs = System.currentTimeMillis()
+            // 90 seconds is wedged — it happened on-device (GPU export
+            // screen stuck at 0.0% for 4 minutes, toast shown, no error,
+            // no finish, no notification progress). Without this the user
+            // is left staring at 0% with no way out. On firing, the
+            // running engine is cancelled and the outcome is reported as
+            // a stall (not a user cancel), so the editor shows a real
+            // error and the user can retry instead of waiting forever.
+            val startedAtMs = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
             val sawAdvance = java.util.concurrent.atomic.AtomicBoolean(false)
             val stalled = java.util.concurrent.atomic.AtomicBoolean(false)
             val watchdog = serviceScope.launch {
                 while (isActive) {
                     kotlinx.coroutines.delay(10_000)
-                    if (!sawAdvance.get() &&
-                        System.currentTimeMillis() - startedAtMs > 90_000
+                    // Keep watching (no return after firing): the fallback
+                    // gets its own 90s window via the resets below, and a
+                    // fallback stall must be caught too.
+                    if (!sawAdvance.get() && !userCancelled.get() &&
+                        System.currentTimeMillis() - startedAtMs.get() > 90_000
                     ) {
                         stalled.set(true)
                         try { gpuEngine.cancel() } catch (_: Exception) { }
                         serviceScope.launch { ffmpegEngine.cancelAllSessions() }
-                        return@launch
                     }
                 }
             }
@@ -151,7 +165,7 @@ class ExportService : Service() {
                     updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
                     broadcastProgress(progress, encodedSecs)
                 }
-                val outcome: ExportOutcome = if (useGpu) {
+                var outcome: ExportOutcome = if (useGpu) {
                     val gpuParams = buildGpuParams(intent, tempOutputPath)
                     when (val r = gpuEngine.export(gpuParams, onProgress)) {
                         is GpuExportEngine.Result.Success -> ExportOutcome.Success(r.outputPath)
@@ -161,6 +175,33 @@ class ExportService : Service() {
                 } else {
                     when (val r = ffmpegEngine.exportFinal(
                         ffmpegCommand = command,
+                        totalDurationSecs = durationSecs,
+                        onProgress = onProgress
+                    )) {
+                        is FFmpegRenderEngine.RenderResult.Success -> ExportOutcome.Success(r.outputPath)
+                        is FFmpegRenderEngine.RenderResult.Failure -> ExportOutcome.Failure(r.error)
+                        is FFmpegRenderEngine.RenderResult.Cancelled -> ExportOutcome.Cancelled
+                    }
+                }
+
+                // GPU → FFmpeg fallback (once): the Transformer has wedged
+                // on-device with no error and no progress, and a fast GPU
+                // failure may also be something FFmpeg handles fine. The
+                // fallback re-runs on the same temp output (the command
+                // starts with -y, so a partial GPU file is overwritten).
+                // A user cancel never falls back.
+                if (useGpu && fallbackCommand != null && !userCancelled.get() &&
+                    (outcome is ExportOutcome.Failure ||
+                        (outcome is ExportOutcome.Cancelled && stalled.get()))
+                ) {
+                    Log.w(TAG, "GPU export failed/stalled; falling back to FFmpeg")
+                    updateNotification(0, "Falling back to standard export...", 0.0, durationSecs)
+                    // Fresh 90s watchdog window for the fallback run.
+                    sawAdvance.set(false)
+                    stalled.set(false)
+                    startedAtMs.set(System.currentTimeMillis())
+                    outcome = when (val r = ffmpegEngine.exportFinal(
+                        ffmpegCommand = fallbackCommand,
                         totalDurationSecs = durationSecs,
                         onProgress = onProgress
                     )) {

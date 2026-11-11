@@ -5573,6 +5573,48 @@ class VideoEditingActivity : AppCompatActivity() {
                 tempOutputFile = File(cacheDir, "temp_video_${System.currentTimeMillis()}$ext")
                 val tempOutputPath = tempOutputFile.absolutePath
 
+                // Build the FFmpeg command FIRST (best-effort): it is the
+                // fallback if the GPU export fails or stalls (the GPU
+                // Transformer has wedged on-device with no error and no
+                // progress), and it is the command the FFmpeg path itself
+                // uses below. Building it is cheap (text PNGs are
+                // hash-cached); a null result just means no fallback is
+                // available and the GPU path runs without one.
+                var ffmpegCommand = viewModel.buildConsolidatedFFmpegCommand(
+                    sourceFilePath = sourceFilePath,
+                    outputFilePath = tempOutputPath,
+                    fontFilePath = fontFilePath,
+                    context = this@VideoEditingActivity
+                )
+                if (ffmpegCommand != null) {
+                    Log.d(TAG, "Raw FFmpeg command: $ffmpegCommand")
+                    val currentProject = viewModel.project.value
+                    if (currentProject != null && ffmpegCommand.contains("(CONCAT_LIST:")) {
+                        val cmdSnapshot = ffmpegCommand
+                        concatFile = withContext(Dispatchers.IO) {
+                            val concatListStart = cmdSnapshot.indexOf("(CONCAT_LIST:") + "(CONCAT_LIST:".length
+                            val concatListEnd = cmdSnapshot.lastIndexOf(")")
+                            if (concatListStart > 13 && concatListEnd > concatListStart) {
+                                val concatList = cmdSnapshot.substring(concatListStart, concatListEnd)
+                                val processedConcatList = processConcatList(concatList)
+
+                                val file = File(cacheDir, "concat_${System.currentTimeMillis()}.txt")
+                                file.writeText(processedConcatList)
+                                file
+                            } else null
+                        }
+
+                        if (concatFile != null) {
+                            ffmpegCommand = ffmpegCommand
+                                .replace("{CONCAT_FILE_PATH}", concatFile.absolutePath)
+                                .substring(0, ffmpegCommand.indexOf("(CONCAT_LIST:"))
+                                .trim()
+                        }
+                    }
+                    Log.d(TAG, "Final FFmpeg command: $ffmpegCommand")
+                }
+                val totalDurationSecs = getTotalSequenceDuration() / 1000.0
+
                 // GPU fast path: plain exports (trim / speed / crop /
                 // resize / fps) and centred canvas-ratio exports (blur
                 // or black background) run through Media3 Transformer
@@ -5580,7 +5622,10 @@ class VideoEditingActivity : AppCompatActivity() {
                 // reports the same progress / success / failure broadcasts,
                 // so the export screen, notification and done screen are
                 // unchanged. Anything the GPU path cannot do falls through
-                // to the FFmpeg command below.
+                // to the FFmpeg command above. If the GPU export fails or
+                // stalls, the service falls back to that FFmpeg command
+                // (same temp output — the command starts with -y, so a
+                // partial GPU file is overwritten safely).
                 if (::tempInputFile.isInitialized &&
                     viewModel.supportsGpuExport(sourceFilePath)
                 ) {
@@ -5590,7 +5635,6 @@ class VideoEditingActivity : AppCompatActivity() {
                         resources.displayMetrics.density
                     )
                     if (gpuParams != null) {
-                        val totalDurationSecs = getTotalSequenceDuration() / 1000.0
                         val intent = Intent(this@VideoEditingActivity, com.tharunbirla.librecuts.services.ExportService::class.java).apply {
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_USE_GPU, true)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_SOURCE_PATH, gpuParams.sourcePath)
@@ -5614,6 +5658,13 @@ class VideoEditingActivity : AppCompatActivity() {
                             gpuParams.overlaysJson?.let { json ->
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_OVERLAYS, json)
                             }
+                            // Fallback for the service: if the GPU export
+                            // fails or stalls (watchdog), it re-runs this
+                            // FFmpeg command on the same temp output.
+                            ffmpegCommand?.let {
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_FALLBACK_COMMAND, it)
+                            }
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_CONCAT_FILE_PATH, concatFile?.absolutePath)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TEMP_OUTPUT_PATH, tempOutputPath)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TOTAL_DURATION_SECS, totalDurationSecs)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_IS_AUDIO_ONLY, isAudioOnly)
@@ -5628,46 +5679,11 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                 }
 
-                var ffmpegCommand = viewModel.buildConsolidatedFFmpegCommand(
-                    sourceFilePath = sourceFilePath,
-                    outputFilePath = tempOutputPath,
-                    fontFilePath = fontFilePath,
-                    context = this@VideoEditingActivity
-                )
-
+                // FFmpeg path (the command was already built above).
                 if (ffmpegCommand == null) {
                     viewModel.exportError("Failed to build FFmpeg command")
                     return@launch
                 }
-
-                Log.d(TAG, "Raw FFmpeg command: $ffmpegCommand")
-
-                val currentProject = viewModel.project.value
-                if (currentProject != null && ffmpegCommand.contains("(CONCAT_LIST:")) {
-                    val cmdSnapshot = ffmpegCommand
-                    concatFile = withContext(Dispatchers.IO) {
-                        val concatListStart = cmdSnapshot.indexOf("(CONCAT_LIST:") + "(CONCAT_LIST:".length
-                        val concatListEnd = cmdSnapshot.lastIndexOf(")")
-                        if (concatListStart > 13 && concatListEnd > concatListStart) {
-                            val concatList = cmdSnapshot.substring(concatListStart, concatListEnd)
-                            val processedConcatList = processConcatList(concatList)
-
-                            val file = File(cacheDir, "concat_${System.currentTimeMillis()}.txt")
-                            file.writeText(processedConcatList)
-                            file
-                        } else null
-                    }
-
-                    if (concatFile != null) {
-                        ffmpegCommand = ffmpegCommand
-                            .replace("{CONCAT_FILE_PATH}", concatFile.absolutePath)
-                            .substring(0, ffmpegCommand.indexOf("(CONCAT_LIST:"))
-                            .trim()
-                    }
-                }
-
-                Log.d(TAG, "Final FFmpeg command: $ffmpegCommand")
-                val totalDurationSecs = getTotalSequenceDuration() / 1000.0
 
                 // Start ExportService
                 val intent = Intent(this@VideoEditingActivity, com.tharunbirla.librecuts.services.ExportService::class.java).apply {
