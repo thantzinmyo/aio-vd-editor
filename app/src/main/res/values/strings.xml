@@ -115,7 +115,7 @@
     <string name="str_draft_delete_message">Delete \"%1$s\"? The saved project file will also be deleted.</string>
     <string name="str_draft_deleted">Project deleted</string>
     <string name="str_draft_renamed">Project renamed</string>
-    <string name="str_draft_missing">Project file not found — removed from recents</string>
+    <string name="str_draft_missing">Could not open this project file — it may have been moved or deleted. It stays in recents; open it again via Open Project.</string>
     <string name="str_tap_to_select_media">Tap to select media</string>
     <string name="str_free_open_source_nlimitless_cr">free. open-source.\nlimitless creativity.</string>
     <string name="str_settings">Settings</string>

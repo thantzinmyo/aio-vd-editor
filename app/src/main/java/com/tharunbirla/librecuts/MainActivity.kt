@@ -377,6 +377,18 @@ class MainActivity : AppCompatActivity() {
     private fun openDraft(draft: DraftEntry) {
         val uri = Uri.parse(draft.uri)
         lifecycleScope.launch(Dispatchers.IO) {
+            // Best effort: re-assert the permission while the grant is
+            // still live. A project saved before the permission fix has
+            // no persistable grant, so this may throw — the open below
+            // is what actually decides.
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // No live grant to keep; opening may still work.
+            }
             // The saved file may have been moved or deleted outside the app.
             val exists = try {
                 contentResolver.openInputStream(uri)?.use { true } ?: false
@@ -385,9 +397,12 @@ class MainActivity : AppCompatActivity() {
             }
             withContext(Dispatchers.Main) {
                 if (!exists) {
-                    DraftRegistry.remove(this@MainActivity, uri)
+                    // Never delete the entry here: a failed open can be a
+                    // lost permission on a file that still exists (the
+                    // user can re-open it via Open Project). Deleting it
+                    // made a recoverable project look permanently lost.
+                    // The user can remove it from the ⋮ menu instead.
                     showToast(getString(R.string.str_draft_missing))
-                    refreshDrafts()
                     return@withContext
                 }
                 DraftRegistry.touch(this@MainActivity, uri)

@@ -530,6 +530,20 @@ class VideoEditingActivity : AppCompatActivity() {
                     contentResolver.openOutputStream(uri)?.use { outputStream ->
                         outputStream.write(json.toByteArray())
                     }
+                    // Keep access to this file after the editor closes:
+                    // without a persistable permission the grant from the
+                    // system picker is lost when the process dies, and the
+                    // Home > Recent entry then fails to open (and used to
+                    // delete itself). Take it while the grant is still live.
+                    try {
+                        contentResolver.takePersistableUriPermission(
+                            uri,
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not take persistable permission for saved project: ${e.message}")
+                    }
                     viewModel.markProjectSaved()
                     // Remember this project so it shows up in Home > Recent projects.
                     com.tharunbirla.librecuts.utils.DraftRegistry.register(
@@ -5709,6 +5723,12 @@ class VideoEditingActivity : AppCompatActivity() {
 
         sheetView.findViewById<View>(R.id.btnSaveProject)?.setBounceClickListener {
             bottomSheetDialog.dismiss()
+            saveProjectLauncher.launch("project.lcprj")
+        }
+
+        sheetView.findViewById<View>(R.id.btnSaveProjectAndExit)?.setBounceClickListener {
+            bottomSheetDialog.dismiss()
+            shouldQuitAfterSave = true
             saveProjectLauncher.launch("project.lcprj")
         }
 

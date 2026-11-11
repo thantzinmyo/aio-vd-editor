@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.tharunbirla.librecuts.MainActivity
 import com.tharunbirla.librecuts.R
+import com.tharunbirla.librecuts.VideoEditingActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,8 +139,15 @@ class ExportService : Service() {
     }
 
     private fun buildNotification(progress: Int, title: String, encodedSecs: Double = 0.0, totalSecs: Double = 0.0): Notification {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // Tapping the notification goes to the editor's Export UI (the
+        // full-screen progress screen), not Home: CLEAR_TOP brings the
+        // running editor to the front; if the editor was closed, a fresh
+        // one opens and the progress broadcasts re-show the export
+        // screen over the empty editor (updateExportProgress sets
+        // isExporting). Cancel still works there — it cancels the
+        // service's sessions globally.
+        val intent = Intent(this, VideoEditingActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

@@ -679,7 +679,12 @@ class VideoEditingViewModel : ViewModel() {
      * FFmpeg build ever rejects it).
      */
     private fun filterComplexThreadsArg(): String {
-        val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        // The filter graph is CPU-bound, so use the device's cores: the
+        // old cap of 4 left cores idle on 8-core phones. Hardware decode
+        // can't help here (the graph needs CPU frames), so thread count
+        // is the cheapest speed lever we have. Still bounded at 8 —
+        // beyond that, context switching eats the gain on a phone.
+        val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
         return " -filter_complex_threads $n"
     }
 
@@ -2301,7 +2306,12 @@ class VideoEditingViewModel : ViewModel() {
     }
 
     fun updateExportProgress(progress: Int, encodedSecs: Double = 0.0) {
-        updateUiState { it.copy(exportProgress = progress.coerceIn(0, 100), exportEncodedSecs = encodedSecs.coerceAtLeast(0.0)) }
+        // isExporting is set here too, not only in startExport(): if the
+        // editor was recreated while an export runs (e.g. opened from
+        // the export notification), the progress broadcast is what
+        // re-shows the export screen. Harmless during a normal export —
+        // startExport() already set it.
+        updateUiState { it.copy(isExporting = true, exportProgress = progress.coerceIn(0, 100), exportEncodedSecs = encodedSecs.coerceAtLeast(0.0)) }
     }
 
     fun finishExport() {
