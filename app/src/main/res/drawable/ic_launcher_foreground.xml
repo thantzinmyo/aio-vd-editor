@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- AIO VD Editor mark: gold "VD" monogram on black. The D carries a
+         play-triangle cut-out (evenOdd), echoing the circular gold/black
+         AIO HUB shop logo. Artwork stays inside the 66dp adaptive-icon
+         safe zone (x/y 21-87). -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D4AF37"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,34 L40,78 L52,34" />
+    <path
+        android:fillColor="#D4AF37"
+        android:fillType="evenOdd"
+        android:pathData="M58,30 L58,78 L66,78 A18,24 0 0,0 66,30 Z M68,46 L68,62 L79,54 Z" />
+</vector>
