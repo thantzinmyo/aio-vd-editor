@@ -32,7 +32,7 @@ class ErrorDisplayActivity : AppCompatActivity() {
 
         val fullDiagnosticLog = """
             ==================================================
-                        LIBRECUTS CRASH REPORT               
+                        AIO VD EDITOR CRASH REPORT               
             ==================================================
             App Version : $appVersion
             Device      : ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})
@@ -91,7 +91,7 @@ class ErrorDisplayActivity : AppCompatActivity() {
                 "\n```\n\n" +
                 "*Note: The complete error log has been copied to your clipboard.*"
             )
-            val url = "https://github.com/tharunbirla/librecuts/issues/new?title=$issueTitle&body=$issueBody"
+            val url = "https://github.com/thantzinmyo/aio-vd-editor/issues/new?title=$issueTitle&body=$issueBody"
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 Toast.makeText(this, "Full crash log copied to clipboard!", Toast.LENGTH_LONG).show()

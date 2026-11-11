@@ -52,6 +52,108 @@ class DraggableBlurBoxOverlayView @JvmOverloads constructor(
     private var dragOffsetX = 0f
     private var dragOffsetY = 0f
 
+    // ── Free corner resize ──────────────────────────────────────────────────
+    // The 4 drawn corner brackets are real resize handles: dragging one moves
+    // that corner while the opposite corner stays fixed, so width and height
+    // change independently (free aspect — e.g. a wide short strip over a
+    // watermark, or a tall narrow strip). Min size is 5% of the video in each
+    // dimension; the box always stays inside the video rect.
+    private var resizeCorner = RESIZE_NONE
+    private val handleTouchRadiusPx: Float
+        get() = 40f * resources.displayMetrics.density
+
+    companion object {
+        private const val RESIZE_NONE = 0
+        private const val RESIZE_TOP_LEFT = 1
+        private const val RESIZE_TOP_RIGHT = 2
+        private const val RESIZE_BOTTOM_LEFT = 3
+        private const val RESIZE_BOTTOM_RIGHT = 4
+    }
+
+    /** Returns which corner handle (if any) the touch point is on. */
+    private fun cornerFor(touchX: Float, touchY: Float): Int {
+        val r = handleTouchRadiusPx
+        val left = boxView.x - 4f
+        val top = boxView.y - 4f
+        val right = boxView.x + boxView.width + 4f
+        val bottom = boxView.y + boxView.height + 4f
+        fun near(cx: Float, cy: Float): Boolean {
+            val dx = touchX - cx
+            val dy = touchY - cy
+            return dx * dx + dy * dy <= r * r
+        }
+        return when {
+            near(left, top) -> RESIZE_TOP_LEFT
+            near(right, top) -> RESIZE_TOP_RIGHT
+            near(left, bottom) -> RESIZE_BOTTOM_LEFT
+            near(right, bottom) -> RESIZE_BOTTOM_RIGHT
+            else -> RESIZE_NONE
+        }
+    }
+
+    /** Applies a resize of the given corner to the touch point (video-rect clamped). */
+    private fun applyResize(corner: Int, touchX: Float, touchY: Float) {
+        val videoRect = getVideoRect()
+        if (videoRect.width() <= 0f || videoRect.height() <= 0f) return
+        val minW = 0.05f * videoRect.width()
+        val minH = 0.05f * videoRect.height()
+
+        var newLeft = boxView.x
+        var newTop = boxView.y
+        var newW = boxView.width.toFloat()
+        var newH = boxView.height.toFloat()
+
+        when (corner) {
+            RESIZE_TOP_LEFT -> {
+                val fixedX = boxView.x + boxView.width
+                val fixedY = boxView.y + boxView.height
+                newLeft = touchX.coerceIn(videoRect.left, fixedX - minW)
+                newTop = touchY.coerceIn(videoRect.top, fixedY - minH)
+                newW = fixedX - newLeft
+                newH = fixedY - newTop
+            }
+            RESIZE_TOP_RIGHT -> {
+                val fixedX = boxView.x
+                val fixedY = boxView.y + boxView.height
+                val newRight = touchX.coerceIn(fixedX + minW, videoRect.right)
+                newTop = touchY.coerceIn(videoRect.top, fixedY - minH)
+                newLeft = fixedX
+                newW = newRight - fixedX
+                newH = fixedY - newTop
+            }
+            RESIZE_BOTTOM_LEFT -> {
+                val fixedX = boxView.x + boxView.width
+                val fixedY = boxView.y
+                val newBottom = touchY.coerceIn(fixedY + minH, videoRect.bottom)
+                newLeft = touchX.coerceIn(videoRect.left, fixedX - minW)
+                newTop = fixedY
+                newW = fixedX - newLeft
+                newH = newBottom - fixedY
+            }
+            RESIZE_BOTTOM_RIGHT -> {
+                val fixedX = boxView.x
+                val fixedY = boxView.y
+                val newRight = touchX.coerceIn(fixedX + minW, videoRect.right)
+                val newBottom = touchY.coerceIn(fixedY + minH, videoRect.bottom)
+                newLeft = fixedX
+                newTop = fixedY
+                newW = newRight - fixedX
+                newH = newBottom - fixedY
+            }
+        }
+
+        boxView.x = newLeft
+        boxView.y = newTop
+        boxView.layoutParams = LayoutParams(newW.toInt().coerceAtLeast(1), newH.toInt().coerceAtLeast(1))
+
+        // Keep the relative geometry in sync (commit reads these fields).
+        relativeWidth = (newW / videoRect.width()).coerceIn(0.05f, 1f)
+        relativeHeight = (newH / videoRect.height()).coerceIn(0.05f, 1f)
+        relativeX = ((newLeft + newW / 2f - videoRect.left) / videoRect.width()).coerceIn(0f, 1f)
+        relativeY = ((newTop + newH / 2f - videoRect.top) / videoRect.height()).coerceIn(0f, 1f)
+        invalidate()
+    }
+
     private val guidelinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#CEC0EC")
         style = Paint.Style.STROKE
@@ -254,6 +356,13 @@ class DraggableBlurBoxOverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 val touchX = ev.x
                 val touchY = ev.y
+                // Corner handles win over dragging: a touch on a corner starts
+                // a free resize instead of a move.
+                val corner = cornerFor(touchX, touchY)
+                if (corner != RESIZE_NONE) {
+                    resizeCorner = corner
+                    return true
+                }
                 if (touchX in boxView.left.toFloat()..boxView.right.toFloat() &&
                     touchY in boxView.top.toFloat()..boxView.bottom.toFloat()
                 ) {
@@ -271,6 +380,21 @@ class DraggableBlurBoxOverlayView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isEditingActive) return false
 
+        // A corner resize in progress takes priority over pinch / drag.
+        if (resizeCorner != RESIZE_NONE) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    applyResize(resizeCorner, event.x, event.y)
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    resizeCorner = RESIZE_NONE
+                    return true
+                }
+            }
+            return true
+        }
+
         scaleDetector.onTouchEvent(event)
 
         if (scaleDetector.isInProgress || event.pointerCount > 1) {
@@ -280,6 +404,13 @@ class DraggableBlurBoxOverlayView @JvmOverloads constructor(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Intercept may not have fired (e.g. touch started on the
+                // box edge); check the corner handles here too.
+                val corner = cornerFor(event.x, event.y)
+                if (corner != RESIZE_NONE) {
+                    resizeCorner = corner
+                    return true
+                }
                 isDragging = true
                 dragOffsetX = event.x - boxView.x
                 dragOffsetY = event.y - boxView.y
@@ -360,8 +491,10 @@ class DraggableBlurBoxOverlayView @JvmOverloads constructor(
             )
             canvas.drawRect(selectionRect, selectionPaint)
 
-            // 4 modern curved corner bracket handles touching the border
-            val bracketLength = 22f
+            // 4 modern curved corner bracket handles touching the border.
+            // These are the resize handles — drag any corner to change the
+            // box width/height freely.
+            val bracketLength = 28f
             val cornerRadius = 8f
 
             // Top-Left Corner

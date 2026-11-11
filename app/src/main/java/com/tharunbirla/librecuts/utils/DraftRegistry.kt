@@ -8,7 +8,7 @@ import com.google.gson.reflect.TypeToken
 /**
  * CapCut-style recent-projects registry for the home screen.
  *
- * LibreCuts saves projects (.lcprj) wherever the user picks via the system
+ * AIO VD Editor saves projects (.lcprj) wherever the user picks via the system
  * file picker, so there is no fixed "drafts folder" to scan. Instead this
  * registry remembers every project the user saves or opens (name, file Uri,
  * last-opened time) in SharedPreferences, most-recent-first, capped so the

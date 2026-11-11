@@ -100,11 +100,15 @@
     <string name="str_v1_0_beta4">v1.0-beta5</string>
     <string name="str_a_privacy_friendly_open_source">A privacy friendly, open source video editor for Android.\nExport watermark free videos locally.</string>
     <string name="str_support_amp_feedback">Support &amp; Feedback</string>
-    <string name="str_librecuts_is_open_source_help">AIO VD Editor is open source. Help us improve by starring the project on GitHub or reporting bugs.</string>
+    <string name="str_librecuts_is_open_source_help">Questions or feedback? Reach us on Telegram.</string>
     <string name="str_star_on_github">Star on GitHub</string>
     <string name="str_report_a_bug">Report a Bug</string>
     <string name="str_sponsor_project">Sponsor Project</string>
-    <string name="str_made_by_tharun_birla">Made by Tharun Birla</string>
+    <string name="str_made_by_aio_hub_psm">Made by AIO HUB PSM</string>
+    <string name="str_telegram_channel">Telegram Channel</string>
+    <string name="str_telegram_channel_desc">App updates and news from AIO HUB PSM</string>
+    <string name="str_contact_admin">Contact Admin</string>
+    <string name="str_contact_admin_desc">Questions, help or feedback — message Admin</string>
     <string name="str_fade_in">Fade In</string>
     <string name="str_0_0s">0.0s</string>
     <string name="str_fade_out">Fade Out</string>
