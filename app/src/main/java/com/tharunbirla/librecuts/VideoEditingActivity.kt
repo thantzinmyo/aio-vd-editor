@@ -1472,7 +1472,7 @@ class VideoEditingActivity : AppCompatActivity() {
                         .show()
                 }
                 toolbar.findViewById<View>(R.id.btnBlurBoxDuplicate)?.setBounceClickListener {
-                    duplicateSelectedOverlay()
+                    duplicateBlurBox()
                 }
 
                 val radiusSlider = toolbar.findViewById<Slider>(R.id.blurBoxRadiusSlider)
@@ -3088,6 +3088,65 @@ class VideoEditingActivity : AppCompatActivity() {
         if (newOp != null && newOpId != null) {
             viewModel.addOperation(newOp)
             viewModel.selectOperation(newOpId)
+        }
+    }
+
+    /**
+     * Duplicates the blur box being edited right now.
+     *
+     * The generic [duplicateSelectedOverlay] silently did nothing for a NEW
+     * blur box (Done not pressed yet) because nothing was selected yet, so
+     * the user saw no copy appear. This version always duplicates the box as
+     * it looks on screen (live overlay geometry), saving the new box first
+     * when needed, and selects the copy so it is immediately visible — the
+     * copy is shifted +8% in both axes so it never hides exactly under the
+     * original.
+     */
+    private fun duplicateBlurBox() {
+        val overlay = draggableBlurBoxOverlay ?: return
+        val rx = overlay.getRelativeX()
+        val ry = overlay.getRelativeY()
+        val rw = overlay.getRelativeWidth()
+        val rh = overlay.getRelativeHeight()
+        val radius = overlay.getBlurRadius()
+        val offset = 0.08f
+
+        val selectedId = viewModel.selectedOperationId.value
+        val existing = selectedId?.let { id ->
+            viewModel.project.value?.operations
+                ?.find { (it as? EditOperation.AddBlurBox)?.id == id } as? EditOperation.AddBlurBox
+        }
+
+        if (existing != null) {
+            // Save the original's current on-screen position first (it may
+            // have been moved/resized since it was last committed).
+            viewModel.updateOperation(existing.copy(
+                relativeX = rx, relativeY = ry, relativeWidth = rw,
+                relativeHeight = rh, blurRadius = radius
+            ))
+            val copy = existing.copy(
+                id = System.nanoTime().toString(),
+                relativeX = (rx + offset).coerceIn(0f, 1f),
+                relativeY = (ry + offset).coerceIn(0f, 1f),
+                relativeWidth = rw,
+                relativeHeight = rh,
+                blurRadius = radius
+            )
+            viewModel.addOperation(copy)
+            viewModel.selectOperation(copy.id)
+        } else {
+            // New box, never committed: save it first, then duplicate it.
+            val start = getGlobalPosition()
+            val end = minOf(start + 3000L, getTotalSequenceDuration())
+            val original = EditOperation.AddBlurBox(rx, ry, rw, rh, radius, start, end)
+            val copy = original.copy(
+                id = System.nanoTime().toString(),
+                relativeX = (rx + offset).coerceIn(0f, 1f),
+                relativeY = (ry + offset).coerceIn(0f, 1f)
+            )
+            viewModel.addOperation(original)
+            viewModel.addOperation(copy)
+            viewModel.selectOperation(copy.id)
         }
     }
 
