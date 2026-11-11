@@ -8353,8 +8353,10 @@ class VideoEditingActivity : AppCompatActivity() {
     }
 
     /** Size an ImageView to a bitmap's aspect within the given caps (dp), so
-     * a landscape video doesn't stretch a portrait preview frame. */
-    private fun fitPreviewImageView(imageView: ImageView, bitmap: android.graphics.Bitmap, maxWdp: Int, maxHdp: Int) {
+     * a landscape video doesn't stretch a portrait preview frame.
+     * Returns the size actually set, in pixels — callers that overlay the
+     * image (e.g. the export progress border) need the same size. */
+    private fun fitPreviewImageView(imageView: ImageView, bitmap: android.graphics.Bitmap, maxWdp: Int, maxHdp: Int): Pair<Int, Int> {
         val density = resources.displayMetrics.density
         val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
         var w = (maxWdp * density).toInt()
@@ -8369,6 +8371,7 @@ class VideoEditingActivity : AppCompatActivity() {
         params.height = h
         imageView.layoutParams = params
         imageView.setImageBitmap(bitmap)
+        return w to h
     }
 
     /** Load the main clip's first frame behind the export percentage.
@@ -8384,11 +8387,20 @@ class VideoEditingActivity : AppCompatActivity() {
                     val dm = resources.displayMetrics
                     val screenWdp = (dm.widthPixels / dm.density).toInt()
                     val screenHdp = (dm.heightPixels / dm.density).toInt()
-                    fitPreviewImageView(
+                    val (w, h) = fitPreviewImageView(
                         iv, bmp,
                         (screenWdp * 0.42).toInt(),
                         (screenHdp * 0.33).toInt()
                     )
+                    // The progress border must be exactly the image's
+                    // size — a match_parent border would inflate the
+                    // wrap_content frame to the full screen.
+                    exportScreen.findViewById<View>(R.id.exportPerimeterProgress)?.let { border ->
+                        val bp = border.layoutParams
+                        bp.width = w
+                        bp.height = h
+                        border.layoutParams = bp
+                    }
                 }
             }
         }

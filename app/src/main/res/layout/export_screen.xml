@@ -87,11 +87,16 @@
 
             <!-- CapCut's progress bar: NOT a bar under the preview — a
                  white border tracing the preview's perimeter, clockwise
-                 from the top-left corner, over a #333333 track. -->
+                 from the top-left corner, over a #333333 track.
+                 0dp here: a match_parent child would inflate this
+                 wrap_content frame to the full screen (the image would
+                 sit top-left and the % would centre in the huge frame
+                 instead of on the image). setExportPreviewImage() sizes
+                 this view to the image's exact size. -->
             <com.tharunbirla.librecuts.customviews.ExportPerimeterProgressView
                 android:id="@+id/exportPerimeterProgress"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_width="0dp"
+                android:layout_height="0dp" />
         </FrameLayout>
 
         <!-- Encoded time readout (was the only progress sign for long videos) -->
