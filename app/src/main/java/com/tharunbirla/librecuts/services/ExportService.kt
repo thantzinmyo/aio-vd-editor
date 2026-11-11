@@ -104,8 +104,11 @@ class ExportService : Service() {
         val durationSecs = intent.getDoubleExtra(EXTRA_TOTAL_DURATION_SECS, 0.0)
         val isAudioOnly = intent.getBooleanExtra(EXTRA_IS_AUDIO_ONLY, false)
 
-        // FFmpeg path still needs the command; the GPU path does not.
-        val command = if (useGpu) null else intent.getStringExtra(EXTRA_COMMAND)
+        // FFmpeg path still needs the command; the GPU path does not use
+        // it ("" is a placeholder that is never read — using null here
+        // would make the whole val String? and break the exportFinal call
+        // below, because the ?: only applies to the else branch).
+        val command = if (useGpu) "" else intent.getStringExtra(EXTRA_COMMAND)
             ?: return START_NOT_STICKY
 
         startForeground(NOTIFICATION_ID, buildNotification(0, "Exporting..."))
