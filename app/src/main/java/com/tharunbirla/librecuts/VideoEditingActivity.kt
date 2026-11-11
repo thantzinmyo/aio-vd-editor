@@ -39,10 +39,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.lottie.LottieAnimationView
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.MediaItem
-import com.google.android.exoplayer2.Player
-import com.google.android.exoplayer2.ui.StyledPlayerView
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.ui.PlayerView
 import com.tharunbirla.librecuts.R
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -74,7 +74,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
-import com.google.android.exoplayer2.ui.AspectRatioFrameLayout
+import androidx.media3.ui.AspectRatioFrameLayout
 
 
 @Suppress("DEPRECATION")
@@ -82,7 +82,7 @@ class VideoEditingActivity : AppCompatActivity() {
 
     // UI Components
     private lateinit var player: ExoPlayer
-    private lateinit var playerView: StyledPlayerView
+    private lateinit var playerView: PlayerView
     private lateinit var tvDuration: TextView
     private lateinit var sequenceTrackContainer: FrameLayout
     private lateinit var textTrackContainer: LinearLayout
@@ -6064,7 +6064,7 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                 }
 
-                override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                     // Do nothing here for overlays because ExoPlayer's surface changes size dynamically when clips 
                     // have different aspect ratios, but we want our overlays to stick to the primary video's canvas.
                 }
@@ -6076,7 +6076,7 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                 }
 
-                override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     super.onPlayerError(error)
                     Log.e(TAG, "ExoPlayer Error: ${error.message}", error)
                     showError("Unsupported video format or corrupted file.")
@@ -6578,7 +6578,7 @@ class VideoEditingActivity : AppCompatActivity() {
                         }
 
                         // Now load it into ExoPlayer
-                        val mediaItem = com.google.android.exoplayer2.MediaItem.fromUri(Uri.fromFile(tempInputFile))
+                        val mediaItem = androidx.media3.common.MediaItem.fromUri(Uri.fromFile(tempInputFile))
                         player.setMediaItem(mediaItem)
                         player.prepare()
                     } else {
@@ -6789,7 +6789,7 @@ class VideoEditingActivity : AppCompatActivity() {
             return
         }
 
-        val mediaSourceFactory = com.google.android.exoplayer2.source.DefaultMediaSourceFactory(this)
+        val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
         
         val exoAudioOps = viewModel.project.value?.operations?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.AddBackgroundAudio>() ?: emptyList()
         
@@ -6810,7 +6810,7 @@ class VideoEditingActivity : AppCompatActivity() {
         }
         
         val sortedBoundaries = boundaries.filter { it in 0..totalSequenceDuration }.sorted()
-        val chunkedSources = mutableListOf<com.google.android.exoplayer2.source.MediaSource>()
+        val chunkedSources = mutableListOf<androidx.media3.exoplayer.source.MediaSource>()
         val newChunkDurations = mutableListOf<Long>()
         
         for (i in 0 until sortedBoundaries.size - 1) {
@@ -6819,7 +6819,7 @@ class VideoEditingActivity : AppCompatActivity() {
             val chunkDurationMs = chunkEndMs - chunkStartMs
             if (chunkDurationMs <= 0L) continue
             
-            var videoSourceForChunk: com.google.android.exoplayer2.source.MediaSource? = null
+            var videoSourceForChunk: androidx.media3.exoplayer.source.MediaSource? = null
             var vGlobalMs = 0L
             for ((index, item) in sequenceItems.withIndex()) {
                 val vStart = vGlobalMs
@@ -6841,7 +6841,7 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                     val clipEndUs = clipStartUs + (chunkDurationMs * 1000L)
                     
-                    val videoMediaItem = com.google.android.exoplayer2.MediaItem.Builder()
+                    val videoMediaItem = androidx.media3.common.MediaItem.Builder()
                         .setUri(videoUri)
                         .build()
                     
@@ -6849,22 +6849,22 @@ class VideoEditingActivity : AppCompatActivity() {
                         ?.find { it.index == index }?.isMuted ?: false
 
                     videoSourceForChunk = if (item.isImage || isImageUri(item.uri)) {
-                        com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L)
+                        androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L)
                     } else if (clipStartUs < clipEndUs) {
                         val baseVideoSource = mediaSourceFactory.createMediaSource(videoMediaItem)
-                        val clippedSource = com.google.android.exoplayer2.source.ClippingMediaSource(
+                        val clippedSource = androidx.media3.exoplayer.source.ClippingMediaSource(
                             baseVideoSource, clipStartUs, clipEndUs, false, false, true
                         )
                         if (isClipMuted) {
-                            com.google.android.exoplayer2.source.FilteringMediaSource(
+                            androidx.media3.exoplayer.source.FilteringMediaSource(
                                 clippedSource,
-                                com.google.android.exoplayer2.C.TRACK_TYPE_VIDEO
+                                androidx.media3.common.C.TRACK_TYPE_VIDEO
                             )
                         } else {
                             clippedSource
                         }
                     } else {
-                        com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L)
+                        androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L)
                     }
                     break
                 }
@@ -6872,10 +6872,10 @@ class VideoEditingActivity : AppCompatActivity() {
             }
             
             if (videoSourceForChunk == null) {
-                videoSourceForChunk = com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L)
+                videoSourceForChunk = androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L)
             }
             
-            val chunkSourcesToMerge = mutableListOf<com.google.android.exoplayer2.source.MediaSource>(videoSourceForChunk)
+            val chunkSourcesToMerge = mutableListOf<androidx.media3.exoplayer.source.MediaSource>(videoSourceForChunk)
             
             exoAudioOps.forEach { op ->
                 val aStart = op.startTimeMs ?: 0L
@@ -6888,7 +6888,7 @@ class VideoEditingActivity : AppCompatActivity() {
                     
                     val actualAudioDurationUs = if (op.internalEndMs > 0) op.internalEndMs * 1000L else Long.MAX_VALUE
                     if (clipStartUs >= actualAudioDurationUs && actualAudioDurationUs != Long.MAX_VALUE) {
-                        chunkSourcesToMerge.add(com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L))
+                        chunkSourcesToMerge.add(androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L))
                     } else {
                         var safeClipEndUs = clipEndUs
                         if (actualAudioDurationUs != Long.MAX_VALUE && safeClipEndUs > actualAudioDurationUs) {
@@ -6896,39 +6896,39 @@ class VideoEditingActivity : AppCompatActivity() {
                         }
                         
                         if (clipStartUs < safeClipEndUs) {
-                            val audioMediaItem = com.google.android.exoplayer2.MediaItem.Builder()
+                            val audioMediaItem = androidx.media3.common.MediaItem.Builder()
                                 .setUri(op.audioUri)
                                 .build()
                             val baseAudioSource = mediaSourceFactory.createMediaSource(audioMediaItem)
                             
                             try {
-                                val audioSlice = com.google.android.exoplayer2.source.ClippingMediaSource(
+                                val audioSlice = androidx.media3.exoplayer.source.ClippingMediaSource(
                                     baseAudioSource, clipStartUs, safeClipEndUs, false, false, true
                                 )
                                 chunkSourcesToMerge.add(audioSlice)
                             } catch (e: Exception) {
-                                chunkSourcesToMerge.add(com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L))
+                                chunkSourcesToMerge.add(androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L))
                             }
                         } else {
-                            chunkSourcesToMerge.add(com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L))
+                            chunkSourcesToMerge.add(androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L))
                         }
                     }
                 } else {
-                    chunkSourcesToMerge.add(com.google.android.exoplayer2.source.SilenceMediaSource(chunkDurationMs * 1000L))
+                    chunkSourcesToMerge.add(androidx.media3.exoplayer.source.SilenceMediaSource(chunkDurationMs * 1000L))
                 }
             }
             
             val mergedChunk = if (chunkSourcesToMerge.size == 1) {
                 chunkSourcesToMerge[0]
             } else {
-                com.google.android.exoplayer2.source.MergingMediaSource(true, false, *chunkSourcesToMerge.toTypedArray())
+                androidx.media3.exoplayer.source.MergingMediaSource(true, false, *chunkSourcesToMerge.toTypedArray())
             }
             chunkedSources.add(mergedChunk)
             newChunkDurations.add(chunkDurationMs)
         }
         
         chunkDurationsMs = newChunkDurations
-        val finalSource = com.google.android.exoplayer2.source.ConcatenatingMediaSource(*chunkedSources.toTypedArray())
+        val finalSource = androidx.media3.exoplayer.source.ConcatenatingMediaSource(*chunkedSources.toTypedArray())
 
         val globalPos = getGlobalPosition()
         val wasPlaying = player.isPlaying
