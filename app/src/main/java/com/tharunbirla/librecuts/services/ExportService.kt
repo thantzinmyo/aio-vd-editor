@@ -118,13 +118,42 @@ class ExportService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification(0, "Exporting..."))
 
         serviceScope.launch {
+            // Watchdog: an export that reports no progress at all within
+            // 90 seconds is wedged — it happened on-device (export screen
+            // stuck at 0.0% forever, no toast missed, no error, no finish,
+            // no notification progress). Without this the user is left
+            // staring at 0% with no way out. On firing, the running
+            // engine is cancelled and the outcome is reported as a stall
+            // (not a user cancel), so the editor shows a real error and
+            // the user can retry instead of waiting forever.
+            val startedAtMs = System.currentTimeMillis()
+            val sawAdvance = java.util.concurrent.atomic.AtomicBoolean(false)
+            val stalled = java.util.concurrent.atomic.AtomicBoolean(false)
+            val watchdog = serviceScope.launch {
+                while (isActive) {
+                    kotlinx.coroutines.delay(10_000)
+                    if (!sawAdvance.get() &&
+                        System.currentTimeMillis() - startedAtMs > 90_000
+                    ) {
+                        stalled.set(true)
+                        try { gpuEngine.cancel() } catch (_: Exception) { }
+                        serviceScope.launch { ffmpegEngine.cancelAllSessions() }
+                        return@launch
+                    }
+                }
+            }
             try {
+                // A progress callback counts as "advancing" only once it
+                // reports real movement (a wedged engine can keep calling
+                // back at a flat 0%).
+                val onProgress: (Int, Double) -> Unit = { progress, encodedSecs ->
+                    if (progress > 0 || encodedSecs > 0.0) sawAdvance.set(true)
+                    updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
+                    broadcastProgress(progress, encodedSecs)
+                }
                 val outcome: ExportOutcome = if (useGpu) {
                     val gpuParams = buildGpuParams(intent, tempOutputPath)
-                    when (val r = gpuEngine.export(gpuParams) { progress, encodedSecs ->
-                        updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
-                        broadcastProgress(progress, encodedSecs)
-                    }) {
+                    when (val r = gpuEngine.export(gpuParams, onProgress)) {
                         is GpuExportEngine.Result.Success -> ExportOutcome.Success(r.outputPath)
                         is GpuExportEngine.Result.Failure -> ExportOutcome.Failure(r.error)
                         GpuExportEngine.Result.Cancelled -> ExportOutcome.Cancelled
@@ -133,10 +162,7 @@ class ExportService : Service() {
                     when (val r = ffmpegEngine.exportFinal(
                         ffmpegCommand = command,
                         totalDurationSecs = durationSecs,
-                        onProgress = { progress, encodedSecs ->
-                            updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
-                            broadcastProgress(progress, encodedSecs)
-                        }
+                        onProgress = onProgress
                     )) {
                         is FFmpegRenderEngine.RenderResult.Success -> ExportOutcome.Success(r.outputPath)
                         is FFmpegRenderEngine.RenderResult.Failure -> ExportOutcome.Failure(r.error)
@@ -165,8 +191,17 @@ class ExportService : Service() {
                         Log.e(TAG, "Export failed: ${outcome.error}")
                     }
                     is ExportOutcome.Cancelled -> {
-                        showCompletionNotification("Export Cancelled", "The export was cancelled", null)
-                        broadcastFailure("Export cancelled")
+                        // A watchdog kill is a stall, not a user cancel —
+                        // report it as a failure so the editor shows the
+                        // error instead of silently returning.
+                        if (stalled.get()) {
+                            showCompletionNotification("Export Failed", "Export stalled with no progress", null)
+                            broadcastFailure("Export stalled (no progress in 90 seconds). Please try again.")
+                            Log.e(TAG, "Export stalled: no progress in 90s")
+                        } else {
+                            showCompletionNotification("Export Cancelled", "The export was cancelled", null)
+                            broadcastFailure("Export cancelled")
+                        }
                     }
                 }
 
@@ -179,6 +214,7 @@ class ExportService : Service() {
                 showCompletionNotification("Export Failed", e.message ?: "Unknown error", null)
                 broadcastFailure(e.message ?: "Unknown error")
             } finally {
+                watchdog.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
