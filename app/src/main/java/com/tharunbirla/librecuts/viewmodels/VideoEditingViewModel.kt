@@ -1086,6 +1086,11 @@ class VideoEditingViewModel : ViewModel() {
 
         var sourceVideoWidth = 1280
         var sourceVideoHeight = 720
+        var sourceFrameRate = 0f
+        val isMainImage = sourceFilePath.endsWith(".png", ignoreCase = true) ||
+                          sourceFilePath.endsWith(".jpg", ignoreCase = true) ||
+                          sourceFilePath.endsWith(".jpeg", ignoreCase = true) ||
+                          sourceFilePath.endsWith(".webp", ignoreCase = true)
         try {
             val retriever = android.media.MediaMetadataRetriever()
             try {
@@ -1093,6 +1098,8 @@ class VideoEditingViewModel : ViewModel() {
                 val wStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
                 val hStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 val rStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                sourceFrameRate = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                    ?.toFloatOrNull() ?: 0f
                 val w = wStr?.toIntOrNull() ?: 1280
                 val h = hStr?.toIntOrNull() ?: 720
                 val r = rStr?.toIntOrNull() ?: 0
@@ -1113,16 +1120,21 @@ class VideoEditingViewModel : ViewModel() {
         // Fast path only when nothing is asked of the export: Original
         // resolution and not audio-only. Otherwise fall through so the
         // chosen resolution (and audio-only) is honoured by the pipeline.
-        if (currentProject.operations.isEmpty() && _exportResolution.value == EXPORT_RESOLUTION_ORIGINAL && !_exportAudioOnly.value) {
+        // Stream-copy is the fastest path, but it is valid only for video sources
+        // whose frame rate already matches the selected export FPS. Otherwise the
+        // requested FPS would be silently ignored. Unknown source FPS deliberately
+        // falls through to the normal encoder pipeline.
+        val canUseStreamCopy = !isMainImage &&
+            sourceFrameRate > 0f &&
+            kotlin.math.abs(sourceFrameRate - _exportFps.value.toFloat()) < 0.5f
+        if (currentProject.operations.isEmpty() &&
+            _exportResolution.value == EXPORT_RESOLUTION_ORIGINAL &&
+            !_exportAudioOnly.value &&
+            canUseStreamCopy) {
             return "-y -i \"$sourceFilePath\" -c copy \"$outputFilePath\""
         }
 
         val operations = currentProject.operations
-
-        val isMainImage = sourceFilePath.endsWith(".png", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".jpg", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".jpeg", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".webp", ignoreCase = true)
 
         // Detect if source video has an audio stream
         val hasAudio = if (isMainImage) {
@@ -1752,7 +1764,7 @@ class VideoEditingViewModel : ViewModel() {
                 
                 val bitrate = exportBitrate(sourceVideoHeight)
                 val defaultEncoder = context?.getSharedPreferences("librecuts_prefs", Context.MODE_PRIVATE)
-                    ?.getString("default_encoder", "hardware") ?: "hardware"
+                    ?.getString("default_encoder", "auto") ?: "hardware"
                 val videoCodec = if (defaultEncoder == "software") "-c:v libx264 -pix_fmt yuv420p" else "-c:v h264_mediacodec -pix_fmt yuv420p -b:v $bitrate"
                 cmd.append(" $videoCodec")
                 
@@ -2054,7 +2066,7 @@ class VideoEditingViewModel : ViewModel() {
         } else {
             val bitrate = exportBitrate(sourceVideoHeight)
             val defaultEncoder = context?.getSharedPreferences("librecuts_prefs", Context.MODE_PRIVATE)
-                ?.getString("default_encoder", "hardware") ?: "hardware"
+                ?.getString("default_encoder", "auto") ?: "hardware"
             val videoCodec = if (defaultEncoder == "software") "-c:v libx264 -pix_fmt yuv420p" else "-c:v h264_mediacodec -pix_fmt yuv420p -b:v $bitrate"
             // If there are no video filters, we still need to apply the scale and fps output params
             if (!hasVideoFilters) {
