@@ -1,3 +1,8 @@
+// The Media3 Transformer APIs are marked @UnstableApi. The opt-in must be
+// at FILE level: a class-level @OptIn did NOT satisfy lint's
+// UnsafeOptInUsageError check (CI #23 — all 44 errors remained).
+@file:OptIn(UnstableApi::class)
+
 package com.tharunbirla.librecuts.services
 
 import android.content.Context
@@ -79,10 +84,9 @@ data class GpuExportParams(
  * path uses, so the export screen, notification and done screen are
  * unchanged.
  *
- * The Media3 Transformer API is marked @UnstableApi, so this class opts
- * in to it (the API surface we use has been stable since 1.9.0).
+ * (Opt-in to Media3's @UnstableApi is at file level — see the top of
+ * this file.)
  */
-@OptIn(UnstableApi::class)
 class GpuExportEngine(private val context: Context) {
 
     sealed interface Result {
