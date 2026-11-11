@@ -627,8 +627,16 @@ class VideoEditingViewModel : ViewModel() {
      * project — Phase 1 scope: a single video clip whose only operations
      * are plain ones the GPU pipeline supports (Trim, SpeedMain without a
      * reverse proxy, Crop). Everything else (text, blur boxes, subtitles,
-     * canvas ratio, audio tracks, multi-clip merges, audio-only, images)
-     * stays on the FFmpeg path.
+     * audio tracks, multi-clip merges, audio-only, images) stays on the
+     * FFmpeg path.
+     *
+     * Phase 2: a centred CanvasRatio op is also allowed — with a blur
+     * background (CanvasBackground BLUR) or a black one (no bg op, or a
+     * black colour). Colour / image backgrounds, a dragged
+     * (off-centre) canvas, and the remaining ops still fall back to
+     * FFmpeg. "Original" ratio is a no-op for the canvas and is
+     * ignored. A CanvasRatio and a Crop op together also fall back
+     * (the editor keeps them mutually exclusive, so this is defensive).
      *
      * One more gate: Transformer's setFrameRate is a MAX — it can only
      * drop frames, never invent them. If the chosen fps is above the
@@ -646,6 +654,8 @@ class VideoEditingViewModel : ViewModel() {
         val ops = project.operations
         if (ops.any { it is EditOperation.Merge }) return false
         var speed = 1f
+        var canvasRatio: EditOperation.CanvasRatio? = null
+        var canvasBg: EditOperation.CanvasBackground? = null
         for (op in ops) {
             when (op) {
                 is EditOperation.Trim -> { }
@@ -654,8 +664,27 @@ class VideoEditingViewModel : ViewModel() {
                     speed = op.speed
                 }
                 is EditOperation.Crop -> { }
+                is EditOperation.CanvasRatio -> {
+                    // "Original" changes nothing — not a canvas op.
+                    if (op.ratioValue == null) continue
+                    // The GPU overlay is centred; a dragged canvas
+                    // (pinch zoom is fine — it is centred too) falls back.
+                    if (op.effectiveOffsetX != 0f || op.effectiveOffsetY != 0f) return false
+                    canvasRatio = op
+                }
+                is EditOperation.CanvasBackground -> { canvasBg = op }
                 else -> return false
             }
+        }
+        if (canvasRatio != null && ops.any { it is EditOperation.Crop }) return false
+        if (canvasRatio != null && canvasBg != null) {
+            // Presentation only does a black background; a colour or
+            // image background needs the FFmpeg canvas.
+            val bg = canvasBg
+            val ok = bg.type == EditOperation.CanvasBackground.BackgroundType.BLUR ||
+                (bg.type == EditOperation.CanvasBackground.BackgroundType.COLOR &&
+                    bg.colorHex.equals("#000000", ignoreCase = true))
+            if (!ok) return false
         }
         val sourceFps = probeSourceFrameRate(sourceFilePath)
         if (sourceFps > 0f) {
@@ -681,6 +710,9 @@ class VideoEditingViewModel : ViewModel() {
         val trim = ops.filterIsInstance<EditOperation.Trim>().lastOrNull()
         val speed = ops.filterIsInstance<EditOperation.SpeedMain>().lastOrNull()?.speed ?: 1f
         val crop = ops.filterIsInstance<EditOperation.Crop>().lastOrNull()
+        val ratio = ops.filterIsInstance<EditOperation.CanvasRatio>().lastOrNull()
+            ?.takeIf { it.ratioValue != null }
+        val bg = ops.filterIsInstance<EditOperation.CanvasBackground>().lastOrNull()
         return com.tharunbirla.librecuts.services.GpuExportParams(
             sourcePath = sourceFilePath,
             outputPath = outputPath,
@@ -696,6 +728,13 @@ class VideoEditingViewModel : ViewModel() {
                     yFraction = it.yFraction,
                     wFraction = it.wFraction,
                     hFraction = it.hFraction
+                )
+            },
+            canvas = ratio?.let {
+                com.tharunbirla.librecuts.services.GpuCanvasSpec(
+                    aspectRatio = it.ratioValue!!,
+                    blurRadius = if (bg?.type == EditOperation.CanvasBackground.BackgroundType.BLUR) bg.blurRadius else 0,
+                    scale = it.effectiveScale
                 )
             }
         )

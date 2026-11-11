@@ -20,6 +20,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
+import androidx.media3.effect.GaussianBlurWithFrameOverlaid
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
@@ -69,7 +70,23 @@ data class GpuExportParams(
     /** Short-edge target, same values as the export resolution setting (0 = Original). */
     val targetRes: Int = 0,
     val targetFps: Int = 30,
-    val crop: GpuCropSpec? = null
+    val crop: GpuCropSpec? = null,
+    /** Canvas ratio composition (Phase 2), or null for the plain path. */
+    val canvas: GpuCanvasSpec? = null
+)
+
+/**
+ * Canvas ratio composition (Phase 2): the output canvas aspect
+ * (width/height, from CanvasRatio.ratioValue), the background blur
+ * strength preset (0 = black background — no CanvasBackground op, or a
+ * black colour), and the pinch-zoom scale (CanvasRatio.effectiveScale).
+ * The engine derives the canvas size, the sharp-frame scale and the
+ * Gaussian sigma from these plus the probed source size.
+ */
+data class GpuCanvasSpec(
+    val aspectRatio: Float,
+    val blurRadius: Int,
+    val scale: Float = 1f
 )
 
 /**
@@ -81,8 +98,15 @@ data class GpuExportParams(
  *
  * Phase 1 scope: single video clip, plain ops only (Trim, SpeedMain
  * without a reverse proxy, Crop). Anything else (text, blur boxes,
- * subtitles, canvas ratio, audio tracks, multi-clip merges) stays on the
- * FFmpeg path — the router in the ViewModel decides.
+ * subtitles, audio tracks, multi-clip merges) stays on the FFmpeg
+ * path — the router in the ViewModel decides.
+ *
+ * Phase 2 (canvas ratio): a centred CanvasRatio op with a blur or
+ * black background also runs on the GPU — GaussianBlurWithFrameOverlaid
+ * (blurred frame + sharp frame scaled to the fitted size) followed by
+ * a Presentation that crops/scales to the exact canvas size. Colour /
+ * image backgrounds, a dragged (off-centre) canvas, and the remaining
+ * ops still fall back to FFmpeg.
  *
  * Progress is polled with [Transformer.getProgress]; the service maps it
  * onto the same onProgress / notification / broadcast wiring the FFmpeg
@@ -169,21 +193,54 @@ class GpuExportEngine(private val context: Context) {
         if (hasClip) mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
         val mediaItem = mediaItemBuilder.build()
 
-        // ── Build the video effects (crop, then scale) ────────────────
+        // ── Build the video effects ───────────────────────────────────
+        // Canvas ratio (Phase 2): the composition is two built-in
+        // effects. GaussianBlurWithFrameOverlaid blurs the whole frame
+        // and overlays the sharp frame scaled to the fitted size
+        // (uniform scale — the fit preserves aspect, so X == Y); the
+        // Presentation then crops/scales to the exact canvas size.
+        // Because the Presentation crops the CENTRE, the blurred
+        // background ends up being the cover-cropped frame blurred —
+        // exactly what the FFmpeg canvas does (its blur bg is the
+        // cover crop, blurred at quarter size). The blur is skipped
+        // when the fit covers the whole canvas (aspect matches): there
+        // is no background visible to blur.
+        // Otherwise the plain Phase 1 path: crop, then scale.
         val videoEffects = mutableListOf<androidx.media3.common.Effect>()
-        cropFrac?.let { (x, y, w, h) ->
-            // Crop takes normalized device coordinates (-1..1, y up);
-            // our fractions are top-left origin, so flip y.
-            val left = 2f * x - 1f
-            val right = 2f * (x + w) - 1f
-            val top = 1f - 2f * y
-            val bottom = 1f - 2f * (y + h)
-            if (left > -1f || right < 1f || bottom > -1f || top < 1f) {
-                videoEffects.add(Crop(left, right, bottom, top))
+        val canvas = params.canvas
+        if (canvas != null) {
+            val (canvasW, canvasH) = canvasOutputSize(dispW, dispH, canvas.aspectRatio, params.targetRes)
+            // Cover scale of the Presentation (max) and fit scale (min).
+            val cover = maxOf(canvasW / dispW.toFloat(), canvasH / dispH.toFloat())
+            val fit = minOf(canvasW / dispW.toFloat(), canvasH / dispH.toFloat())
+            val sharp = (fit / cover * canvas.scale).coerceIn(0.01f, 10f)
+            if (canvas.blurRadius > 0 && fit < cover) {
+                // Box-blur radius R (canvas px) has variance R²/3, so
+                // the matching Gaussian sigma is R/√3 ≈ 0.577R; the blur
+                // runs on the input frame, so divide by the cover scale.
+                val sigma = (0.577f * canvas.blurRadius / cover).coerceAtLeast(0.5f)
+                videoEffects.add(GaussianBlurWithFrameOverlaid(sigma, sharp, sharp))
             }
-        }
-        presentationHeight(dispW, dispH, cropFrac, params.targetRes)?.let { height ->
-            videoEffects.add(Presentation.createForHeight(height))
+            videoEffects.add(
+                Presentation.createForWidthAndHeight(
+                    canvasW, canvasH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                )
+            )
+        } else {
+            cropFrac?.let { (x, y, w, h) ->
+                // Crop takes normalized device coordinates (-1..1, y up);
+                // our fractions are top-left origin, so flip y.
+                val left = 2f * x - 1f
+                val right = 2f * (x + w) - 1f
+                val top = 1f - 2f * y
+                val bottom = 1f - 2f * (y + h)
+                if (left > -1f || right < 1f || bottom > -1f || top < 1f) {
+                    videoEffects.add(Crop(left, right, bottom, top))
+                }
+            }
+            presentationHeight(dispW, dispH, cropFrac, params.targetRes)?.let { height ->
+                videoEffects.add(Presentation.createForHeight(height))
+            }
         }
 
         // ── Build the EditedMediaItem (fps cap, speed) ────────────────
@@ -327,6 +384,25 @@ class GpuExportEngine(private val context: Context) {
             val hF = srcAspect / targetAspect
             floatArrayOf(0f, (1f - hF) / 2f, 1f, hF)
         }
+    }
+
+    /**
+     * Final canvas size for a CanvasRatio op, matching the FFmpeg
+     * canvas + final resolution scale exactly: the short edge is the
+     * export resolution (or the source long edge for Original), and the
+     * other edge follows the canvas aspect. Even-rounded for H.264.
+     */
+    private fun canvasOutputSize(srcW: Int, srcH: Int, ratio: Float, targetRes: Int): Pair<Int, Int> {
+        val (w, h) = if (targetRes > 0) {
+            val s = targetRes
+            if (ratio >= 1f) Math.round(s * ratio) to s
+            else s to Math.round(s / ratio)
+        } else {
+            val longEdge = maxOf(srcW, srcH)
+            if (ratio >= 1f) longEdge to Math.round(longEdge / ratio)
+            else Math.round(longEdge * ratio) to longEdge
+        }
+        return (w / 2 * 2).coerceAtLeast(2) to (h / 2 * 2).coerceAtLeast(2)
     }
 
     /**

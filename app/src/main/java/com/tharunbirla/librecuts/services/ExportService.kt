@@ -67,6 +67,9 @@ class ExportService : Service() {
         const val EXTRA_GPU_CROP_Y = "extra_gpu_crop_y"
         const val EXTRA_GPU_CROP_W = "extra_gpu_crop_w"
         const val EXTRA_GPU_CROP_H = "extra_gpu_crop_h"
+        const val EXTRA_GPU_CANVAS_ASPECT = "extra_gpu_canvas_aspect"
+        const val EXTRA_GPU_CANVAS_BLUR = "extra_gpu_canvas_blur"
+        const val EXTRA_GPU_CANVAS_SCALE = "extra_gpu_canvas_scale"
     }
 
     /** One outcome shape for both engines, so the save / notify / broadcast tail is shared. */
@@ -185,6 +188,7 @@ class ExportService : Service() {
 
     private fun buildGpuParams(intent: Intent, tempOutputPath: String): GpuExportParams {
         val cropAspect = intent.getStringExtra(EXTRA_GPU_CROP_ASPECT)
+        val canvasAspect = intent.getFloatExtra(EXTRA_GPU_CANVAS_ASPECT, -1f)
         return GpuExportParams(
             sourcePath = intent.getStringExtra(EXTRA_GPU_SOURCE_PATH) ?: "",
             outputPath = tempOutputPath,
@@ -201,7 +205,14 @@ class ExportService : Service() {
                     wFraction = intent.getFloatExtra(EXTRA_GPU_CROP_W, 1f),
                     hFraction = intent.getFloatExtra(EXTRA_GPU_CROP_H, 1f)
                 )
-            }
+            },
+            canvas = if (canvasAspect > 0f) {
+                GpuCanvasSpec(
+                    aspectRatio = canvasAspect,
+                    blurRadius = intent.getIntExtra(EXTRA_GPU_CANVAS_BLUR, 0),
+                    scale = intent.getFloatExtra(EXTRA_GPU_CANVAS_SCALE, 1f)
+                )
+            } else null
         )
     }
 

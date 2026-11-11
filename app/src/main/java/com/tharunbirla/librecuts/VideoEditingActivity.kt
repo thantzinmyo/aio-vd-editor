@@ -5563,8 +5563,9 @@ class VideoEditingActivity : AppCompatActivity() {
                 tempOutputFile = File(cacheDir, "temp_video_${System.currentTimeMillis()}$ext")
                 val tempOutputPath = tempOutputFile.absolutePath
 
-                // GPU fast path (Phase 1): plain exports (trim / speed /
-                // crop / resize / fps) run through Media3 Transformer
+                // GPU fast path: plain exports (trim / speed / crop /
+                // resize / fps) and centred canvas-ratio exports (blur
+                // or black background) run through Media3 Transformer
                 // instead of the CPU FFmpeg filter graph. The service
                 // reports the same progress / success / failure broadcasts,
                 // so the export screen, notification and done screen are
@@ -5590,6 +5591,11 @@ class VideoEditingActivity : AppCompatActivity() {
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_Y, crop.yFraction)
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_W, crop.wFraction)
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_H, crop.hFraction)
+                            }
+                            gpuParams.canvas?.let { canvas ->
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_ASPECT, canvas.aspectRatio)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_BLUR, canvas.blurRadius)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_SCALE, canvas.scale)
                             }
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TEMP_OUTPUT_PATH, tempOutputPath)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TOTAL_DURATION_SECS, totalDurationSecs)
