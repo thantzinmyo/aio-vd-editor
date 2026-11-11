@@ -5513,11 +5513,18 @@ class VideoEditingActivity : AppCompatActivity() {
         }
 
         if (!project.hasOperations()) {
-            // Fast byte-copy only when the export asks for nothing extra.
-            // A chosen resolution (or audio-only) must go through FFmpeg
-            // so the output is actually re-encoded at the chosen size.
+            // Fast byte-copy only when the export asks for nothing extra
+            // AND the copy would honour the export settings: the source
+            // must be a real video (not a still image) whose frame rate
+            // already matches the chosen export FPS. Otherwise fall
+            // through to the FFmpeg pipeline, which re-encodes at the
+            // chosen size and FPS. Without this gate the FPS chip is
+            // silently ignored for no-edit exports, and an image project
+            // would be copied to a .mp4 as-is.
             if (viewModel.exportResolution.value == EXPORT_RESOLUTION_ORIGINAL &&
-                !viewModel.exportAudioOnly.value
+                !viewModel.exportAudioOnly.value &&
+                ::tempInputFile.isInitialized &&
+                viewModel.canByteCopyExport(tempInputFile.absolutePath)
             ) {
                 exportVideoFile(videoUri!!)
                 return

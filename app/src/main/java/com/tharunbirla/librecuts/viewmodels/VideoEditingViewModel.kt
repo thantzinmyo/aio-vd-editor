@@ -569,6 +569,59 @@ class VideoEditingViewModel : ViewModel() {
         }
     }
 
+    private fun isImagePath(path: String): Boolean =
+        path.endsWith(".png", ignoreCase = true) ||
+        path.endsWith(".jpg", ignoreCase = true) ||
+        path.endsWith(".jpeg", ignoreCase = true) ||
+        path.endsWith(".webp", ignoreCase = true)
+
+    /**
+     * The source video's frame rate, for deciding whether the byte-copy fast
+     * path is valid. METADATA_KEY_CAPTURE_FRAMERATE is missing for many
+     * sources (downloaded videos, screen recordings, Telegram videos), so
+     * fall back to frame count / duration. Returns 0 when it cannot be
+     * determined — callers must treat unknown as "do not copy" and use the
+     * encode pipeline instead, never assume a rate.
+     */
+    private fun probeSourceFrameRate(sourceFilePath: String): Float {
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(sourceFilePath)
+                val capture = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                    ?.toFloatOrNull() ?: 0f
+                if (capture > 0f) {
+                    capture
+                } else {
+                    val frames = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)
+                        ?.toLongOrNull() ?: 0L
+                    val durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull() ?: 0L
+                    if (frames > 0 && durationMs > 0) frames * 1000f / durationMs else 0f
+                }
+            } finally {
+                retriever.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not determine source frame rate: ${e.message}")
+            0f
+        }
+    }
+
+    /**
+     * Whether the no-edit byte-copy fast path is valid for this source: a
+     * real video (not a still image) whose frame rate already matches the
+     * export FPS, so the copy honours the export settings. An unknown
+     * frame rate returns false — the encode pipeline is the safe fallback.
+     * Used by the Activity's saveAction gate AND by the -c copy return
+     * inside buildConsolidatedFFmpegCommand.
+     */
+    fun canByteCopyExport(sourceFilePath: String): Boolean {
+        if (isImagePath(sourceFilePath)) return false
+        val fps = probeSourceFrameRate(sourceFilePath)
+        return fps > 0f && kotlin.math.abs(fps - _exportFps.value.toFloat()) < 0.5f
+    }
+
     /**
      * Build the video portion of a filter_complex graph from non-merge, non-audio operations.
      *
@@ -1086,6 +1139,8 @@ class VideoEditingViewModel : ViewModel() {
 
         var sourceVideoWidth = 1280
         var sourceVideoHeight = 720
+        var sourceFrameRate = 0f
+        val isMainImage = isImagePath(sourceFilePath)
         try {
             val retriever = android.media.MediaMetadataRetriever()
             try {
@@ -1093,6 +1148,18 @@ class VideoEditingViewModel : ViewModel() {
                 val wStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
                 val hStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 val rStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                // Frame rate for the stream-copy gate: capture framerate
+                // first, frame count / duration as the fallback (see
+                // probeSourceFrameRate for why both are needed).
+                sourceFrameRate = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                    ?.toFloatOrNull() ?: 0f
+                if (sourceFrameRate <= 0f) {
+                    val frames = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)
+                        ?.toLongOrNull() ?: 0L
+                    val durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull() ?: 0L
+                    if (frames > 0 && durationMs > 0) sourceFrameRate = frames * 1000f / durationMs
+                }
                 val w = wStr?.toIntOrNull() ?: 1280
                 val h = hStr?.toIntOrNull() ?: 720
                 val r = rStr?.toIntOrNull() ?: 0
@@ -1113,16 +1180,23 @@ class VideoEditingViewModel : ViewModel() {
         // Fast path only when nothing is asked of the export: Original
         // resolution and not audio-only. Otherwise fall through so the
         // chosen resolution (and audio-only) is honoured by the pipeline.
-        if (currentProject.operations.isEmpty() && _exportResolution.value == EXPORT_RESOLUTION_ORIGINAL && !_exportAudioOnly.value) {
+        // Stream-copy is the fastest path, but it is valid only for video
+        // sources whose frame rate already matches the selected export
+        // FPS. Otherwise the requested FPS would be silently ignored.
+        // Unknown source FPS deliberately falls through to the normal
+        // encoder pipeline.
+        val canUseStreamCopy = !isMainImage &&
+            sourceFrameRate > 0f &&
+            kotlin.math.abs(sourceFrameRate - _exportFps.value.toFloat()) < 0.5f
+        if (currentProject.operations.isEmpty() &&
+            _exportResolution.value == EXPORT_RESOLUTION_ORIGINAL &&
+            !_exportAudioOnly.value &&
+            canUseStreamCopy
+        ) {
             return "-y -i \"$sourceFilePath\" -c copy \"$outputFilePath\""
         }
 
         val operations = currentProject.operations
-
-        val isMainImage = sourceFilePath.endsWith(".png", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".jpg", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".jpeg", ignoreCase = true) ||
-                          sourceFilePath.endsWith(".webp", ignoreCase = true)
 
         // Detect if source video has an audio stream
         val hasAudio = if (isMainImage) {
@@ -1752,7 +1826,7 @@ class VideoEditingViewModel : ViewModel() {
                 
                 val bitrate = exportBitrate(sourceVideoHeight)
                 val defaultEncoder = context?.getSharedPreferences("librecuts_prefs", Context.MODE_PRIVATE)
-                    ?.getString("default_encoder", "hardware") ?: "hardware"
+                    ?.getString("default_encoder", "auto") ?: "hardware"
                 val videoCodec = if (defaultEncoder == "software") "-c:v libx264 -pix_fmt yuv420p" else "-c:v h264_mediacodec -pix_fmt yuv420p -b:v $bitrate"
                 cmd.append(" $videoCodec")
                 
@@ -2054,7 +2128,7 @@ class VideoEditingViewModel : ViewModel() {
         } else {
             val bitrate = exportBitrate(sourceVideoHeight)
             val defaultEncoder = context?.getSharedPreferences("librecuts_prefs", Context.MODE_PRIVATE)
-                ?.getString("default_encoder", "hardware") ?: "hardware"
+                ?.getString("default_encoder", "auto") ?: "hardware"
             val videoCodec = if (defaultEncoder == "software") "-c:v libx264 -pix_fmt yuv420p" else "-c:v h264_mediacodec -pix_fmt yuv420p -b:v $bitrate"
             // If there are no video filters, we still need to apply the scale and fps output params
             if (!hasVideoFilters) {
