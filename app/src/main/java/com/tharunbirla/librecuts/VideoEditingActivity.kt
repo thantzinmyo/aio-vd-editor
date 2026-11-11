@@ -2291,7 +2291,10 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                     exportScreen.findViewById<TextView>(R.id.tvExportPercentage)?.text =
                         String.format(java.util.Locale.US, "%.1f%%", pct)
-                    exportScreen.findViewById<android.widget.ProgressBar>(R.id.exportProgressBar)?.progress = pct.toInt()
+                    // CapCut's progress is the white border tracing the
+                    // preview's perimeter (see ExportPerimeterProgressView).
+                    exportScreen.findViewById<com.tharunbirla.librecuts.customviews.ExportPerimeterProgressView>(R.id.exportPerimeterProgress)?.progress =
+                        (pct / 100.0).toFloat()
                     val encodedView = exportScreen.findViewById<TextView>(R.id.tvExportEncoded)
                     if (uiState.exportEncodedSecs > 0 && totalSecs > 0) {
                         encodedView?.text = getString(
@@ -8368,7 +8371,9 @@ class VideoEditingActivity : AppCompatActivity() {
         imageView.setImageBitmap(bitmap)
     }
 
-    /** Load the main clip's first frame behind the export percentage. */
+    /** Load the main clip's first frame behind the export percentage.
+     * The preview is CapCut-sized: at most 42% of the screen width and
+     * 33% of the screen height, keeping the video's aspect. */
     private fun setExportPreviewImage() {
         val clipUri = getSequenceItems().getOrNull(0)?.uri ?: return
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -8376,7 +8381,14 @@ class VideoEditingActivity : AppCompatActivity() {
             if (bmp != null) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     val iv = exportScreen.findViewById<ImageView>(R.id.ivExportPreview) ?: return@withContext
-                    fitPreviewImageView(iv, bmp, 280, 460)
+                    val dm = resources.displayMetrics
+                    val screenWdp = (dm.widthPixels / dm.density).toInt()
+                    val screenHdp = (dm.heightPixels / dm.density).toInt()
+                    fitPreviewImageView(
+                        iv, bmp,
+                        (screenWdp * 0.42).toInt(),
+                        (screenHdp * 0.33).toInt()
+                    )
                 }
             }
         }

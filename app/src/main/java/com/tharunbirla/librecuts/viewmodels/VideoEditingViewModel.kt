@@ -779,17 +779,17 @@ class VideoEditingViewModel : ViewModel() {
             val (relX, relY, anchorX, anchorY) = if (op.hasCustomPosition()) {
                 floatArrayOf(op.relativeX!!, op.relativeY!!, 0f, 0f)
             } else when (op.position) {
-                EditOperation.TextPosition.BOTTOM_RIGHT -> floatArrayOf(1f, 1f, 1f, -1f)
-                EditOperation.TextPosition.TOP_RIGHT -> floatArrayOf(1f, 0f, 1f, 1f)
-                EditOperation.TextPosition.TOP_LEFT -> floatArrayOf(0f, 0f, -1f, 1f)
-                EditOperation.TextPosition.BOTTOM_LEFT -> floatArrayOf(0f, 1f, -1f, -1f)
-                EditOperation.TextPosition.CENTER_BOTTOM -> floatArrayOf(0.5f, 1f, 0f, -1f)
-                EditOperation.TextPosition.CENTER_TOP -> floatArrayOf(0.5f, 0f, 0f, 1f)
-                EditOperation.TextPosition.CENTER -> floatArrayOf(0.5f, 0.5f, 0f, 0f)
-                EditOperation.TextPosition.TOP_CENTER -> floatArrayOf(0.5f, 0f, 0f, 1f)
-                EditOperation.TextPosition.CENTER_LEFT -> floatArrayOf(0f, 0.5f, -1f, 0f)
-                EditOperation.TextPosition.CENTER_RIGHT -> floatArrayOf(1f, 0.5f, 1f, 0f)
-                EditOperation.TextPosition.BOTTOM_CENTER -> floatArrayOf(0.5f, 1f, 0f, -1f)
+                TextPosition.BOTTOM_RIGHT -> floatArrayOf(1f, 1f, 1f, -1f)
+                TextPosition.TOP_RIGHT -> floatArrayOf(1f, 0f, 1f, 1f)
+                TextPosition.TOP_LEFT -> floatArrayOf(0f, 0f, -1f, 1f)
+                TextPosition.BOTTOM_LEFT -> floatArrayOf(0f, 1f, -1f, -1f)
+                TextPosition.CENTER_BOTTOM -> floatArrayOf(0.5f, 1f, 0f, -1f)
+                TextPosition.CENTER_TOP -> floatArrayOf(0.5f, 0f, 0f, 1f)
+                TextPosition.CENTER -> floatArrayOf(0.5f, 0.5f, 0f, 0f)
+                TextPosition.TOP_CENTER -> floatArrayOf(0.5f, 0f, 0f, 1f)
+                TextPosition.CENTER_LEFT -> floatArrayOf(0f, 0.5f, -1f, 0f)
+                TextPosition.CENTER_RIGHT -> floatArrayOf(1f, 0.5f, 1f, 0f)
+                TextPosition.BOTTOM_CENTER -> floatArrayOf(0.5f, 1f, 0f, -1f)
             }
             com.tharunbirla.librecuts.services.GpuTextSpec(
                 text = op.text,
@@ -811,12 +811,12 @@ class VideoEditingViewModel : ViewModel() {
         }
         val subtitles = ops.filterIsInstance<EditOperation.AddSubtitles>().map { op ->
             val align = when (op.position) {
-                EditOperation.TextPosition.TOP_LEFT,
-                EditOperation.TextPosition.CENTER_LEFT,
-                EditOperation.TextPosition.BOTTOM_LEFT -> "left"
-                EditOperation.TextPosition.TOP_RIGHT,
-                EditOperation.TextPosition.CENTER_RIGHT,
-                EditOperation.TextPosition.BOTTOM_RIGHT -> "right"
+                TextPosition.TOP_LEFT,
+                TextPosition.CENTER_LEFT,
+                TextPosition.BOTTOM_LEFT -> "left"
+                TextPosition.TOP_RIGHT,
+                TextPosition.CENTER_RIGHT,
+                TextPosition.BOTTOM_RIGHT -> "right"
                 else -> "center"
             }
             com.tharunbirla.librecuts.services.GpuSubtitleSpec(

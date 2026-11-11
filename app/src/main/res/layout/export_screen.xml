@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- CapCut-style export screen: full-screen black, the video frame with a
-     big percentage over it, a thin progress bar, and the encoded time. -->
+     big percentage over it, the progress as a white border tracing the
+     preview's perimeter (ExportPerimeterProgressView), and the encoded
+     time below. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/exportScreen"
@@ -42,7 +44,7 @@
                 android:fontFamily="sans-serif-medium"
                 android:text="@string/str_exporting"
                 android:textColor="#FFFFFFFF"
-                android:textSize="18sp" />
+                android:textSize="20sp" />
         </RelativeLayout>
 
         <!-- Subtitle -->
@@ -55,19 +57,23 @@
             android:textColor="#FFAAAAAA"
             android:textSize="13sp" />
 
-        <!-- Video preview with the percentage over it, like CapCut -->
+        <!-- Video preview with the percentage over it, like CapCut.
+             The default size is CapCut's (42% of a 411dp screen, 9:16);
+             setExportPreviewImage() resizes the ImageView to the real
+             video aspect within 42% of screen width / 33% of height,
+             and the frame (wrap_content) follows it. -->
         <FrameLayout
             android:id="@+id/exportPreviewFrame"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="32dp">
+            android:layout_marginTop="40dp">
 
             <ImageView
                 android:id="@+id/ivExportPreview"
-                android:layout_width="280dp"
-                android:layout_height="420dp"
+                android:layout_width="170dp"
+                android:layout_height="302dp"
                 android:background="#FF111111"
-                android:scaleType="centerCrop" />
+                android:scaleType="fitCenter" />
 
             <TextView
                 android:id="@+id/tvExportPercentage"
@@ -79,16 +85,13 @@
                 android:textColor="#FFFFFFFF"
                 android:textSize="32sp" />
 
-            <ProgressBar
-                android:id="@+id/exportProgressBar"
-                style="?android:attr/progressBarStyleHorizontal"
+            <!-- CapCut's progress bar: NOT a bar under the preview — a
+                 white border tracing the preview's perimeter, clockwise
+                 from the top-left corner, over a #333333 track. -->
+            <com.tharunbirla.librecuts.customviews.ExportPerimeterProgressView
+                android:id="@+id/exportPerimeterProgress"
                 android:layout_width="match_parent"
-                android:layout_height="4dp"
-                android:layout_gravity="bottom"
-                android:indeterminate="false"
-                android:max="100"
-                android:progress="0"
-                android:progressDrawable="@drawable/linear_progress_white" />
+                android:layout_height="match_parent" />
         </FrameLayout>
 
         <!-- Encoded time readout (was the only progress sign for long videos) -->
