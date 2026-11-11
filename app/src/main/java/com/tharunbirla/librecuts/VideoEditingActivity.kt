@@ -139,6 +139,11 @@ class VideoEditingActivity : AppCompatActivity() {
     private lateinit var timeRulerView: com.tharunbirla.librecuts.customviews.TimeRulerView
     private lateinit var loadingScreen: View
     private lateinit var exportScreen: View
+    private lateinit var exportDoneScreen: View
+    // Content URI of the last exported video, for sharing from the done screen.
+    private var lastExportShareUri: Uri? = null
+    // True once the export preview frame has been loaded for the current export.
+    private var exportPreviewSet = false
     private lateinit var previewLoadingOverlay: View
     private lateinit var lottieAnimationView: LottieAnimationView
     private lateinit var btnUndo: ImageButton
@@ -223,7 +228,9 @@ class VideoEditingActivity : AppCompatActivity() {
                 com.tharunbirla.librecuts.services.ExportService.ACTION_EXPORT_SUCCESS -> {
                     val uri = intent.getStringExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_SAVED_URI)
                     viewModel.finishExport()
-                    android.widget.Toast.makeText(this@VideoEditingActivity, R.string.toast_video_exported_to_gallery_succ, android.widget.Toast.LENGTH_LONG).show()
+                    // CapCut-style: show the done screen instead of a toast.
+                    val shareUri = uri?.let { android.net.Uri.parse(it) }
+                    showExportDoneScreen(shareUri, shareUri)
                 }
                 com.tharunbirla.librecuts.services.ExportService.ACTION_EXPORT_FAILURE -> {
                     val error = intent.getStringExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_ERROR) ?: "Unknown Error"
@@ -814,6 +821,55 @@ class VideoEditingActivity : AppCompatActivity() {
         exportScreen = findViewById(R.id.exportScreen)
         exportScreen.findViewById<View>(R.id.btnCancelExport)?.setBounceClickListener {
             cancelExport()
+        }
+        exportScreen.findViewById<View>(R.id.btnExportBack)?.setBounceClickListener {
+            cancelExport()
+        }
+        exportDoneScreen = findViewById(R.id.exportDoneScreen)
+        exportDoneScreen.findViewById<View>(R.id.btnDoneBack)?.setBounceClickListener {
+            exportDoneScreen.visibility = View.GONE
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnDone)?.setBounceClickListener {
+            exportDoneScreen.visibility = View.GONE
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnShareVideo)?.setBounceClickListener {
+            shareExportedVideo()
+        }
+        exportDoneScreen.findViewById<View>(R.id.doneThumbnailFrame)?.setBounceClickListener {
+            lastExportShareUri?.let { uri ->
+                try {
+                    val playIntent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "video/mp4")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(playIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not open exported video: ${e.message}")
+                }
+            }
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnDoneNewProject)?.setBounceClickListener {
+            finish()
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnDoneExportOptions)?.setBounceClickListener {
+            exportDoneScreen.visibility = View.GONE
+            showQualitySettingsDialog()
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnDoneVideoQuality)?.setBounceClickListener {
+            exportDoneScreen.visibility = View.GONE
+            showQualitySettingsDialog()
+        }
+        exportDoneScreen.findViewById<View>(R.id.btnDoneBackToEditor)?.setBounceClickListener {
+            exportDoneScreen.visibility = View.GONE
+        }
+        exportDoneScreen.findViewById<View>(R.id.rowTelegramChannel)?.setBounceClickListener {
+            openUrl("https://t.me/aiohubpsmshop")
+        }
+        exportDoneScreen.findViewById<View>(R.id.rowContactAdmin)?.setBounceClickListener {
+            openUrl("https://t.me/DoubleT2245")
+        }
+        exportDoneScreen.findViewById<View>(R.id.rowSupportGroup)?.setBounceClickListener {
+            openUrl("https://t.me/aiohubsupport")
         }
         previewLoadingOverlay = findViewById(R.id.previewLoadingOverlay)
         lottieAnimationView = findViewById(R.id.lottieAnimation)
@@ -2192,20 +2248,41 @@ class VideoEditingActivity : AppCompatActivity() {
             viewModel.uiState.collect { uiState ->
                 if (uiState.isExporting) {
                     loadingScreen.visibility = View.GONE
-                    val progress = uiState.exportProgress
-                    exportScreen.findViewById<TextView>(R.id.tvExportPercentage)?.text = "$progress%"
-                    exportScreen.findViewById<android.widget.ProgressBar>(R.id.exportProgressBar)?.progress = progress
-                    // Show the encoded time under the %: for a 20-minute video the
-                    // % sits at 0 for a long time, so the moving time proves the
-                    // export is alive instead of looking stuck at "Starting".
+                    exportDoneScreen.visibility = View.GONE
+                    // Once per export: title with the chosen resolution and
+                    // the video's first frame behind the percentage.
+                    if (!exportPreviewSet) {
+                        exportPreviewSet = true
+                        val res = viewModel.exportResolution.value
+                        exportScreen.findViewById<TextView>(R.id.tvExportTitle)?.text =
+                            if (res > 0) getString(R.string.str_exporting_in, "${res}p")
+                            else getString(R.string.str_exporting)
+                        setExportPreviewImage()
+                    }
+                    // CapCut shows the percentage with one decimal, computed
+                    // from the encoded time so it moves smoothly even when
+                    // the integer % would sit at 0 for a long video.
                     val totalSecs = getTotalSequenceDuration() / 1000.0
-                    val messageView = exportScreen.findViewById<TextView>(R.id.tvExportMessage)
-                    if (uiState.exportEncodedSecs > 0 && totalSecs > 0) {
-                        messageView?.text = "Encoded ${formatExportTime(uiState.exportEncodedSecs)} / ${formatExportTime(totalSecs)}"
+                    val pct = if (totalSecs > 0) {
+                        (uiState.exportEncodedSecs / totalSecs * 100).coerceIn(0.0, 100.0)
                     } else {
-                        messageView?.setText(R.string.str_please_don_t_close_the_app)
+                        uiState.exportProgress.toDouble()
+                    }
+                    exportScreen.findViewById<TextView>(R.id.tvExportPercentage)?.text =
+                        String.format(java.util.Locale.US, "%.1f%%", pct)
+                    exportScreen.findViewById<android.widget.ProgressBar>(R.id.exportProgressBar)?.progress = pct.toInt()
+                    val encodedView = exportScreen.findViewById<TextView>(R.id.tvExportEncoded)
+                    if (uiState.exportEncodedSecs > 0 && totalSecs > 0) {
+                        encodedView?.text = getString(
+                            R.string.str_encoded,
+                            formatExportTime(uiState.exportEncodedSecs),
+                            formatExportTime(totalSecs)
+                        )
+                    } else {
+                        encodedView?.text = ""
                     }
                 } else {
+                    exportPreviewSet = false
                     val emptyStateVisible = findViewById<View>(R.id.emptyProjectState)?.visibility == View.VISIBLE
                     if (isImportLoading || (!isVideoLoaded && !emptyStateVisible)) {
                         showLoading(getString(R.string.loading), getString(R.string.loading_tag))
@@ -5712,16 +5789,22 @@ class VideoEditingActivity : AppCompatActivity() {
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         viewModel.updateExportProgress(100)
                         viewModel.finishExport()
-                        val displayPath = if (customFileUri != null) {
-                            "Custom Folder"
-                        } else {
-                            outputFile?.absolutePath ?: "Downloads/AIO VD Editor"
+                        // CapCut-style done screen. A file written straight
+                        // to Downloads has no content URI yet, so scan it
+                        // into MediaStore first — that only indexes the file,
+                        // it does not copy it.
+                        if (customFileUri != null) {
+                            showExportDoneScreen(customFileUri, customFileUri)
+                        } else if (outputFile != null) {
+                            val file = outputFile!!
+                            android.media.MediaScannerConnection.scanFile(
+                                this@VideoEditingActivity,
+                                arrayOf(file.absolutePath),
+                                arrayOf("video/mp4")
+                            ) { _, scannedUri ->
+                                runOnUiThread { showExportDoneScreen(scannedUri, Uri.fromFile(file)) }
+                            }
                         }
-                        Toast.makeText(
-                            this@VideoEditingActivity,
-                            "Video exported: $displayPath",
-                            Toast.LENGTH_LONG
-                        ).show()
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -8142,6 +8225,99 @@ class VideoEditingActivity : AppCompatActivity() {
     private fun formatExportTime(secs: Double): String {
         val total = secs.toLong().coerceAtLeast(0L)
         return String.format(Locale.getDefault(), "%02d:%02d", total / 60, total % 60)
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open $url: ${e.message}")
+        }
+    }
+
+    /** First frame of a video, from a content:// or file:// Uri. */
+    private fun loadVideoFrame(uri: Uri): android.graphics.Bitmap? {
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(this, uri)
+            val bmp = retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            retriever.release()
+            bmp
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not load video frame: ${e.message}")
+            null
+        }
+    }
+
+    /** Size an ImageView to a bitmap's aspect within the given caps (dp), so
+     * a landscape video doesn't stretch a portrait preview frame. */
+    private fun fitPreviewImageView(imageView: ImageView, bitmap: android.graphics.Bitmap, maxWdp: Int, maxHdp: Int) {
+        val density = resources.displayMetrics.density
+        val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        var w = (maxWdp * density).toInt()
+        var h = (w / ratio).toInt()
+        val maxH = (maxHdp * density).toInt()
+        if (h > maxH) {
+            h = maxH
+            w = (h * ratio).toInt()
+        }
+        val params = imageView.layoutParams
+        params.width = w
+        params.height = h
+        imageView.layoutParams = params
+        imageView.setImageBitmap(bitmap)
+    }
+
+    /** Load the main clip's first frame behind the export percentage. */
+    private fun setExportPreviewImage() {
+        val clipUri = getSequenceItems().getOrNull(0)?.uri ?: return
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val bmp = loadVideoFrame(clipUri)
+            if (bmp != null) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val iv = exportScreen.findViewById<ImageView>(R.id.ivExportPreview) ?: return@withContext
+                    fitPreviewImageView(iv, bmp, 280, 460)
+                }
+            }
+        }
+    }
+
+    /** CapCut-style done screen: thumbnail, share, quick actions, AIO HUB PSM
+     * Telegram info. A null shareUri hides the Share button. */
+    private fun showExportDoneScreen(shareUri: Uri?, thumbnailUri: Uri?) {
+        if (isFinishing || isDestroyed) return
+        lastExportShareUri = shareUri
+        exportDoneScreen.findViewById<View>(R.id.btnShareVideo)?.visibility =
+            if (shareUri != null) View.VISIBLE else View.GONE
+        exportDoneScreen.findViewById<View>(R.id.doneThumbnailFrame)?.visibility =
+            if (thumbnailUri != null) View.VISIBLE else View.GONE
+        if (thumbnailUri != null) {
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val bmp = loadVideoFrame(thumbnailUri)
+                if (bmp != null) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val iv = exportDoneScreen.findViewById<ImageView>(R.id.ivDoneThumbnail) ?: return@withContext
+                        fitPreviewImageView(iv, bmp, 140, 200)
+                    }
+                }
+            }
+        }
+        exportScreen.visibility = View.GONE
+        exportDoneScreen.visibility = View.VISIBLE
+    }
+
+    private fun shareExportedVideo() {
+        val uri = lastExportShareUri ?: return
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "video/mp4"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, getString(R.string.str_share_video)))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not share exported video: ${e.message}")
+        }
     }
 
     private fun showError(error: String) {

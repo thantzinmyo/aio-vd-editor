@@ -155,7 +155,26 @@ class FFmpegRenderEngine(private val context: Context) {
      * Execute an FFmpeg command and return the result.
      * Runs on IO dispatcher for non-blocking execution.
      */
-    suspend fun executeCommand(command: String, isRetry: Boolean = false): RenderResult {
+    /**
+     * One fallback step for a failed FFmpeg command. Order matters:
+     * 1. Strip -filter_complex_threads (a device's FFmpeg build that
+     *    rejects the option fails at parse time, so this retry is cheap).
+     * 2. Swap the encoder (hardware <-> software).
+     * Returns null when there is nothing left to try. Callers allow up
+     * to two retries, so a command can shed the flag AND swap encoders.
+     */
+    private fun fallbackCommand(command: String): Pair<String, String>? = when {
+        command.contains("-filter_complex_threads") ->
+            command.replace(Regex(" -filter_complex_threads \\d+"), "") to "without filter threads"
+        command.contains("h264_mediacodec") ->
+            command.replace("h264_mediacodec", "libx264") to "with software encoder libx264"
+        command.contains("libx264") ->
+            command.replace("-c:v libx264", "-c:v h264_mediacodec -b:v 8M")
+                .replace("libx264", "h264_mediacodec") to "with hardware encoder h264_mediacodec"
+        else -> null
+    }
+
+    suspend fun executeCommand(command: String, retryCount: Int = 0): RenderResult {
         return withContext(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Executing FFmpeg command: $command")
@@ -176,15 +195,10 @@ class FFmpegRenderEngine(private val context: Context) {
                     )
                 } else {
                     val diagnosticLog = createDiagnosticReport(context, command, returnCode, session, logs)
-
-                    if (!isRetry && command.contains("h264_mediacodec")) {
-                        Log.w(TAG, "Hardware encoder h264_mediacodec failed or produced no video stream. Falling back to software encoder libx264. Error:\n$diagnosticLog")
-                        val fallbackCommand = command.replace("h264_mediacodec", "libx264")
-                        return@withContext executeCommand(fallbackCommand, isRetry = true)
-                    } else if (!isRetry && command.contains("libx264")) {
-                        Log.w(TAG, "Software encoder libx264 failed. Falling back to hardware encoder h264_mediacodec. Error:\n$diagnosticLog")
-                        val fallbackCommand = command.replace("-c:v libx264", "-c:v h264_mediacodec -b:v 8M").replace("libx264", "h264_mediacodec")
-                        return@withContext executeCommand(fallbackCommand, isRetry = true)
+                    val fallback = if (retryCount < 2) fallbackCommand(command) else null
+                    if (fallback != null && fallback.first != command) {
+                        Log.w(TAG, "FFmpeg failed; retrying ${fallback.second}. Error:\n$diagnosticLog")
+                        return@withContext executeCommand(fallback.first, retryCount + 1)
                     }
 
                     Log.e(TAG, "FFmpeg error:\n$diagnosticLog")
@@ -272,7 +286,7 @@ class FFmpegRenderEngine(private val context: Context) {
         ffmpegCommand: String,
         totalDurationSecs: Double? = null,
         onProgress: ((progress: Int, encodedSecs: Double) -> Unit)? = null,
-        isRetry: Boolean = false
+        retryCount: Int = 0
     ): RenderResult {
         return withContext(Dispatchers.IO) {
             try {
@@ -331,15 +345,10 @@ class FFmpegRenderEngine(private val context: Context) {
                     )
                 } else {
                     val diagnosticLog = createDiagnosticReport(context, ffmpegCommand, returnCode, session, logs)
-
-                    if (!isRetry && ffmpegCommand.contains("h264_mediacodec")) {
-                        Log.w(TAG, "Hardware encoder h264_mediacodec failed or produced no video stream. Falling back to software encoder libx264. Error:\n$diagnosticLog")
-                        val fallbackCommand = ffmpegCommand.replace("h264_mediacodec", "libx264")
-                        return@withContext exportFinal(fallbackCommand, totalDurationSecs, onProgress, isRetry = true)
-                    } else if (!isRetry && ffmpegCommand.contains("libx264")) {
-                        Log.w(TAG, "Software encoder libx264 failed. Falling back to hardware encoder h264_mediacodec. Error:\n$diagnosticLog")
-                        val fallbackCommand = ffmpegCommand.replace("-c:v libx264", "-c:v h264_mediacodec -b:v 8M").replace("libx264", "h264_mediacodec")
-                        return@withContext exportFinal(fallbackCommand, totalDurationSecs, onProgress, isRetry = true)
+                    val fallback = if (retryCount < 2) fallbackCommand(ffmpegCommand) else null
+                    if (fallback != null && fallback.first != ffmpegCommand) {
+                        Log.w(TAG, "FFmpeg failed; retrying ${fallback.second}. Error:\n$diagnosticLog")
+                        return@withContext exportFinal(fallback.first, totalDurationSecs, onProgress, retryCount + 1)
                     }
 
                     Log.e(TAG, "FFmpeg error:\n$diagnosticLog")

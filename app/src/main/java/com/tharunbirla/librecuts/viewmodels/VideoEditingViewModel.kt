@@ -610,7 +610,24 @@ class VideoEditingViewModel : ViewModel() {
         // 32% faster filter time than the quarter-size blur with a full-res
         // scale+crop first, PSNR 44.8 dB vs the full-res blur — a blurred
         // background is a blurred background).
-        return "format=yuv420p,scale=$sw:$sh:force_original_aspect_ratio=increase,crop=$sw:$sh,boxblur=$r,scale=$w:$h"
+        // The final upscale is bilinear: the background is already
+        // blurred, so a sharper scaler buys nothing there (host FFmpeg:
+        // ~10% faster filter time; the foreground keeps bicubic).
+        return "format=yuv420p,scale=$sw:$sh:force_original_aspect_ratio=increase,crop=$sw:$sh,boxblur=$r,scale=$w:$h:flags=bilinear"
+    }
+
+    /**
+     * Threads for the filter_complex graph. The bundled FFmpeg is 8.0,
+     * and -filter_complex_threads exists since FFmpeg 5.0, so it is
+     * supported here. On a multi-core phone it lets frames pipeline
+     * through the graph instead of waiting on each other (host FFmpeg
+     * shows no gain on this 1.5-CPU VM, so the phone gain is unverified
+     * — the render engine strips the flag and retries if a device's
+     * FFmpeg build ever rejects it).
+     */
+    private fun filterComplexThreadsArg(): String {
+        val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        return " -filter_complex_threads $n"
     }
 
     private fun buildCanvasRatioStages(
@@ -1714,6 +1731,7 @@ class VideoEditingViewModel : ViewModel() {
             if (_exportAudioOnly.value) {
                 filterParts.add("${finalVideoLabel}nullsink")
             }
+            cmd.append(filterComplexThreadsArg())
             cmd.append(" -filter_complex \"${filterParts.joinToString(";")}\"")
             
             if (_exportAudioOnly.value) {
@@ -1998,6 +2016,7 @@ class VideoEditingViewModel : ViewModel() {
                 filterComplexParts.add("${mappedVideoLabel}nullsink")
             }
             
+            cmd.append(filterComplexThreadsArg())
             cmd.append(" -filter_complex \"${filterComplexParts.joinToString(";")}\"")
 
             if (!_exportAudioOnly.value) {

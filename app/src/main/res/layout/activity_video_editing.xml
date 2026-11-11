@@ -920,6 +920,13 @@
         android:layout_height="match_parent"
         android:visibility="gone" />
 
+    <include
+        android:id="@+id/exportDoneScreen"
+        layout="@layout/export_done_screen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <FrameLayout
         android:id="@+id/previewLoadingOverlay"
         android:layout_width="match_parent"
