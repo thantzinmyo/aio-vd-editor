@@ -241,6 +241,15 @@
                 android:layout_height="match_parent"
                 android:visibility="gone" />
 
+            <!-- CapCut-style Ratio framing: transparent pinch/drag layer over
+                 the preview while a preset ratio is edited. Above the video
+                 and overlays, below the badges / fullscreen button. -->
+            <View
+                android:id="@+id/ratioGestureView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvPreviewBadge"
                 android:layout_width="wrap_content"

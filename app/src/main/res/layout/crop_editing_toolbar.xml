@@ -38,7 +38,7 @@
                 android:layout_height="wrap_content"
                 android:layout_centerInParent="true"
                 android:fontFamily="sans-serif-medium"
-                android:text="@string/str_crop_aspect_ratio"
+                android:text="@string/str_ratio"
                 android:textColor="@color/textColor"
                 android:textSize="18sp" />
 
@@ -54,6 +54,8 @@
                 app:tint="@color/activeTool" />
         </RelativeLayout>
 
+        <!-- Ratio options in CapCut order: Original, 9:16, 16:9, 1:1, 4:3,
+             3:4, 5:8", then Custom (the old cut-rectangle tool). -->
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -70,31 +72,31 @@
                 android:paddingHorizontal="24dp">
 
                 <LinearLayout
-                    android:id="@+id/frameAspectRatio1"
+                    android:id="@+id/frameAspectRatioOriginal"
                     android:layout_width="60dp"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="12dp"
                     android:gravity="center"
                     android:orientation="vertical">
                     <FrameLayout
-                        android:id="@+id/bg16_9"
+                        android:id="@+id/bgOriginal"
                         android:layout_width="56dp"
                         android:layout_height="56dp"
                         android:background="@drawable/bg_aspect_ratio_item">
                         <ImageView
-                            android:id="@+id/ic16_9"
+                            android:id="@+id/icOriginal"
                             android:layout_width="24dp"
                             android:layout_height="24dp"
                             android:layout_gravity="center"
-                            android:src="@drawable/ic_crop_16_9_24"
+                            android:src="@drawable/ic_ratio_original_24"
                             app:tint="@color/iconSecondary" />
                     </FrameLayout>
                     <TextView
-                        android:id="@+id/txt16_9"
+                        android:id="@+id/txtOriginal"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="@string/str_16_9"
+                        android:text="@string/str_original"
                         android:textColor="@color/toolTextInactive"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -130,6 +132,36 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/frameAspectRatio1"
+                    android:layout_width="60dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <FrameLayout
+                        android:id="@+id/bg16_9"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="@drawable/bg_aspect_ratio_item">
+                        <ImageView
+                            android:id="@+id/ic16_9"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_crop_16_9_24"
+                            app:tint="@color/iconSecondary" />
+                    </FrameLayout>
+                    <TextView
+                        android:id="@+id/txt16_9"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/str_16_9"
+                        android:textColor="@color/toolTextInactive"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/frameAspectRatio3"
                     android:layout_width="60dp"
                     android:layout_height="wrap_content"
@@ -155,6 +187,96 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:text="@string/str_1_1"
+                        android:textColor="@color/toolTextInactive"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/frameAspectRatio4_3"
+                    android:layout_width="60dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <FrameLayout
+                        android:id="@+id/bg4_3"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="@drawable/bg_aspect_ratio_item">
+                        <ImageView
+                            android:id="@+id/ic4_3"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_ratio_4_3_24"
+                            app:tint="@color/iconSecondary" />
+                    </FrameLayout>
+                    <TextView
+                        android:id="@+id/txt4_3"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/str_4_3"
+                        android:textColor="@color/toolTextInactive"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/frameAspectRatio3_4"
+                    android:layout_width="60dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <FrameLayout
+                        android:id="@+id/bg3_4"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="@drawable/bg_aspect_ratio_item">
+                        <ImageView
+                            android:id="@+id/ic3_4"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_ratio_3_4_24"
+                            app:tint="@color/iconSecondary" />
+                    </FrameLayout>
+                    <TextView
+                        android:id="@+id/txt3_4"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/str_3_4"
+                        android:textColor="@color/toolTextInactive"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/frameAspectRatio5_8"
+                    android:layout_width="60dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <FrameLayout
+                        android:id="@+id/bg5_8"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="@drawable/bg_aspect_ratio_item">
+                        <ImageView
+                            android:id="@+id/ic5_8"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_ratio_5_8_24"
+                            app:tint="@color/iconSecondary" />
+                    </FrameLayout>
+                    <TextView
+                        android:id="@+id/txt5_8"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/str_5_8"
                         android:textColor="@color/toolTextInactive"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -190,5 +312,16 @@
 
             </LinearLayout>
         </HorizontalScrollView>
+
+        <TextView
+            android:id="@+id/tvRatioHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:text="@string/str_ratio_hint"
+            android:textColor="@color/toolTextInactive"
+            android:textSize="12sp"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

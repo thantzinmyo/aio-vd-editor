@@ -49,7 +49,7 @@ object ProjectSerializer {
             var opTypeStr = jsonObject.get("operationType")?.asString
             if (opTypeStr == null) {
                 val typeVal = jsonObject.get("type")?.asString
-                val validClasses = setOf("Trim", "SpeedMain", "ReverseMain", "MirrorMain", "Crop", "AddText", "Merge", "MaskMain", "MuteAudio", "Transition", "MuteClip", "ColorFilter", "AddBackgroundAudio", "AddImageOverlay", "AddBlurBox", "AddSubtitles", "Adjust", "CanvasBackground")
+                val validClasses = setOf("Trim", "SpeedMain", "ReverseMain", "MirrorMain", "Crop", "CanvasRatio", "AddText", "Merge", "MaskMain", "MuteAudio", "Transition", "MuteClip", "ColorFilter", "AddBackgroundAudio", "AddImageOverlay", "AddBlurBox", "AddSubtitles", "Adjust", "CanvasBackground")
                 
                 if (typeVal != null && validClasses.contains(typeVal)) {
                     opTypeStr = typeVal
@@ -88,6 +88,7 @@ object ProjectSerializer {
                 "ReverseMain" -> EditOperation.ReverseMain::class.java
                 "MirrorMain" -> EditOperation.MirrorMain::class.java
                 "Crop" -> EditOperation.Crop::class.java
+                "CanvasRatio" -> EditOperation.CanvasRatio::class.java
                 "AddText" -> EditOperation.AddText::class.java
                 "Merge" -> EditOperation.Merge::class.java
                 "MaskMain" -> EditOperation.MaskMain::class.java

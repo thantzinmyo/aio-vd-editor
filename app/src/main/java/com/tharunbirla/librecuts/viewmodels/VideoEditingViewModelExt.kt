@@ -42,10 +42,53 @@ fun VideoEditingViewModel.addCropOperation(
     aspectRatio: String, xFraction: Float = 0f, yFraction: Float = 0f,
     wFraction: Float = 1f, hFraction: Float = 1f
 ) {
-    executeCommand(ReplaceUniqueOperationCommand(
-        EditOperation.Crop(aspectRatio, xFraction, yFraction, wFraction, hFraction),
-        "Crop Video"
-    ))
+    executeCommand(MutateListCommand("Crop Video") { ops ->
+        // A cut and a canvas ratio cannot combine (the preview could not
+        // show both), so adding a Crop cut removes any CanvasRatio op.
+        val kept = ops.filterNot { it is EditOperation.CanvasRatio }.toMutableList()
+        val index = kept.indexOfFirst { it is EditOperation.Crop }
+        val newOp = EditOperation.Crop(aspectRatio, xFraction, yFraction, wFraction, hFraction)
+        if (index != -1) kept[index] = newOp else kept.add(newOp)
+        kept
+    })
+}
+
+/**
+ * CapCut-style canvas ratio: set the output canvas aspect. Replaces any
+ * existing CanvasRatio op (keeping its zoom/offset so switching ratios
+ * does not reset the framing) and removes any Crop cut op — a cut and a
+ * canvas cannot combine, or the preview would no longer match the export.
+ */
+fun VideoEditingViewModel.setCanvasRatioOperation(aspectRatio: String) {
+    executeCommand(MutateListCommand("Change Ratio") { ops ->
+        val existing = ops.filterIsInstance<EditOperation.CanvasRatio>().lastOrNull()
+        val kept = ops.filterNot { it is EditOperation.CanvasRatio || it is EditOperation.Crop }.toMutableList()
+        kept.add(
+            EditOperation.CanvasRatio(
+                aspectRatio = aspectRatio,
+                scale = existing?.effectiveScale ?: 1f,
+                offsetX = existing?.effectiveOffsetX ?: 0f,
+                offsetY = existing?.effectiveOffsetY ?: 0f
+            )
+        )
+        kept
+    })
+}
+
+/** Commit a pinch/drag framing change (one undo step per gesture). */
+fun VideoEditingViewModel.updateCanvasRatioTransform(scale: Float, offsetX: Float, offsetY: Float) {
+    executeCommand(MutateListCommand("Resize Video") { ops ->
+        val idx = ops.indexOfFirst { it is EditOperation.CanvasRatio }
+        if (idx == -1) return@MutateListCommand ops
+        val current = ops[idx] as EditOperation.CanvasRatio
+        val kept = ops.toMutableList()
+        kept[idx] = current.copy(
+            scale = scale.coerceIn(1f, 4f),
+            offsetX = offsetX.coerceIn(-0.5f, 0.5f),
+            offsetY = offsetY.coerceIn(-0.5f, 0.5f)
+        )
+        kept
+    })
 }
 
 fun VideoEditingViewModel.updateCanvasBackgroundOperation(

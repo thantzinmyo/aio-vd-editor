@@ -70,6 +70,12 @@
     <string name="str_16_9">16:9</string>
     <string name="str_9_16">9:16</string>
     <string name="str_1_1">1:1</string>
+    <string name="str_ratio">Ratio</string>
+    <string name="str_original">Original</string>
+    <string name="str_4_3">4:3</string>
+    <string name="str_3_4">3:4</string>
+    <string name="str_5_8">5:8"</string>
+    <string name="str_ratio_hint">Pinch to zoom • drag to move the video</string>
     <string name="str_custom">Custom</string>
     <string name="str_trim_video">Trim Video</string>
     <string name="str_transitions">Transitions</string>

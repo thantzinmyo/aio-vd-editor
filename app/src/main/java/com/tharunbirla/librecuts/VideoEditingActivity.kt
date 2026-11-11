@@ -456,6 +456,16 @@ class VideoEditingActivity : AppCompatActivity() {
     private var videoMaskOverlayView: com.tharunbirla.librecuts.customviews.VideoMaskOverlayView? = null
     private var mainVideoMaskContainer: com.tharunbirla.librecuts.customviews.MaskedFrameLayout? = null
     private var initialCropOperation: com.tharunbirla.librecuts.models.EditOperation.Crop? = null
+    private var initialRatioOperation: com.tharunbirla.librecuts.models.EditOperation.CanvasRatio? = null
+    // Live pinch/drag framing while the Ratio sheet is open (committed to
+    // the CanvasRatio op only when the gesture ends, so each gesture is one
+    // undo step).
+    private var ratioLiveScale = 1f
+    private var ratioLiveOffsetX = 0f
+    private var ratioLiveOffsetY = 0f
+    private var ratioGestureScaleBase = 1f
+    private var ratioGestureOffsetBaseX = 0f
+    private var ratioGestureOffsetBaseY = 0f
     private var subtitlesEditingToolbar: View? = null
     private var isSubtitlesEditingActive = false
 
@@ -759,6 +769,7 @@ class VideoEditingActivity : AppCompatActivity() {
         bgPreviewImageView = findViewById(R.id.bgPreviewImageView)
         transitionPreviewOverlayView = findViewById(R.id.transitionPreviewOverlayView)
         canvasContainer = findViewById(R.id.canvasContainer)
+        setupRatioGestureView()
 
         btnFullscreen = findViewById(R.id.btnFullscreen)
         btnExpandTimeline = findViewById(R.id.btnExpandTimeline)
@@ -1771,6 +1782,18 @@ class VideoEditingActivity : AppCompatActivity() {
         cropEditingToolbar = try {
             findViewById<View>(R.id.cropEditingToolbar)?.also { toolbar ->
                 toolbar.findViewById<ImageButton>(R.id.btnCloseSheet)?.setBounceClickListener {
+                    val currentRatio = viewModel.project.value?.operations
+                        ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.CanvasRatio>()
+                        ?.lastOrNull()
+                    if (currentRatio != null) {
+                        val init = initialRatioOperation
+                        if (init == null) {
+                            viewModel.removeOperation(currentRatio.id)
+                        } else {
+                            viewModel.setCanvasRatioOperation(init.aspectRatio)
+                            viewModel.updateCanvasRatioTransform(init.effectiveScale, init.effectiveOffsetX, init.effectiveOffsetY)
+                        }
+                    }
                     val currentCrop = viewModel.project.value?.operations
                         ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.Crop>()
                         ?.lastOrNull()
@@ -1793,23 +1816,40 @@ class VideoEditingActivity : AppCompatActivity() {
                 toolbar.findViewById<ImageButton>(R.id.btnCropDone)?.setBounceClickListener {
                     exitCropEditingMode()
                 }
-                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio1)?.setBounceClickListener {
+                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatioOriginal)?.setBounceClickListener {
                     cropOverlayView?.visibility = View.GONE
-                    val bounds = getPresetCropBounds("16:9")
-                    viewModel.addCropOperation("16:9", bounds.left, bounds.top, bounds.width(), bounds.height())
-                    updateCropUi("16:9")
+                    viewModel.setCanvasRatioOperation("Original")
+                    updateCropUi("Original")
                 }
                 toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio2)?.setBounceClickListener {
                     cropOverlayView?.visibility = View.GONE
-                    val bounds = getPresetCropBounds("9:16")
-                    viewModel.addCropOperation("9:16", bounds.left, bounds.top, bounds.width(), bounds.height())
+                    viewModel.setCanvasRatioOperation("9:16")
                     updateCropUi("9:16")
+                }
+                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio1)?.setBounceClickListener {
+                    cropOverlayView?.visibility = View.GONE
+                    viewModel.setCanvasRatioOperation("16:9")
+                    updateCropUi("16:9")
                 }
                 toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio3)?.setBounceClickListener {
                     cropOverlayView?.visibility = View.GONE
-                    val bounds = getPresetCropBounds("1:1")
-                    viewModel.addCropOperation("1:1", bounds.left, bounds.top, bounds.width(), bounds.height())
+                    viewModel.setCanvasRatioOperation("1:1")
                     updateCropUi("1:1")
+                }
+                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio4_3)?.setBounceClickListener {
+                    cropOverlayView?.visibility = View.GONE
+                    viewModel.setCanvasRatioOperation("4:3")
+                    updateCropUi("4:3")
+                }
+                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio3_4)?.setBounceClickListener {
+                    cropOverlayView?.visibility = View.GONE
+                    viewModel.setCanvasRatioOperation("3:4")
+                    updateCropUi("3:4")
+                }
+                toolbar.findViewById<LinearLayout>(R.id.frameAspectRatio5_8)?.setBounceClickListener {
+                    cropOverlayView?.visibility = View.GONE
+                    viewModel.setCanvasRatioOperation("5:8")
+                    updateCropUi("5:8")
                 }
                 toolbar.findViewById<LinearLayout>(R.id.frameAspectRatioCustom)?.setBounceClickListener {
                     val existing = viewModel.project.value?.operations
@@ -2259,11 +2299,16 @@ class VideoEditingActivity : AppCompatActivity() {
                         updateSubtitlesUi()
                     }
 
-                    val cropOps = project.operations.filterIsInstance<EditOperation.Crop>()
-                    if (cropOps.isNotEmpty()) {
-                        applyCropPreview(cropOps.last().aspectRatio)
+                    val ratioOps = project.operations.filterIsInstance<EditOperation.CanvasRatio>()
+                    if (ratioOps.isNotEmpty()) {
+                        applyCanvasRatioPreview(ratioOps.last())
                     } else {
-                        resetCropPreview()
+                        val cropOps = project.operations.filterIsInstance<EditOperation.Crop>()
+                        if (cropOps.isNotEmpty()) {
+                            applyCropPreview(cropOps.last().aspectRatio)
+                        } else {
+                            resetCropPreview()
+                        }
                     }
                     
                     updateCanvasBackgroundPreview()
@@ -2413,6 +2458,10 @@ class VideoEditingActivity : AppCompatActivity() {
             playerLp.gravity = Gravity.TOP or Gravity.START
             playerView.layoutParams = playerLp
             playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+            // A Ratio canvas zooms the player with scaleX/Y; a cut must not
+            // inherit that transform.
+            playerView.scaleX = 1f
+            playerView.scaleY = 1f
 
             playerView.translationX = -fullWidth * xFrac
             playerView.translationY = -fullHeight * yFrac
@@ -2438,6 +2487,230 @@ class VideoEditingActivity : AppCompatActivity() {
             draggableBlurBoxOverlay?.setVideoSize(canvasW.toInt(), canvasH.toInt())
             cropOverlayView?.setVideoSize(canvasW.toInt(), canvasH.toInt())
         }
+    }
+
+    /**
+     * CapCut-style Ratio preview: size the canvas to the target aspect and
+     * show the whole video FIT inside it (pinch-zoomed / dragged per the
+     * op). Unlike the cut preview, this is live while the Ratio sheet is
+     * open — picking a ratio must show the result immediately. The canvas
+     * background (blur / colour / image) fills the empty area through
+     * bgPreviewImageView, which is MATCH_PARENT inside the canvas.
+     */
+    private fun applyCanvasRatioPreview(ratioOp: EditOperation.CanvasRatio?) {
+        val canvasContainer = findViewById<FrameLayout>(R.id.canvasContainer) ?: return
+        if (ratioOp == null || ratioOp.ratioValue == null) {
+            resetCropPreview()
+            return
+        }
+        // Start the gesture from the op's stored framing.
+        ratioLiveScale = ratioOp.effectiveScale
+        ratioLiveOffsetX = ratioOp.effectiveOffsetX
+        ratioLiveOffsetY = ratioOp.effectiveOffsetY
+
+        val targetRatio = ratioOp.ratioValue!!
+        val activeParent = (canvasContainer.parent as? View) ?: playerContainer
+        activeParent.post {
+            val containerWidth = activeParent.width.toFloat()
+            val containerHeight = activeParent.height.toFloat()
+            if (containerWidth <= 0f || containerHeight <= 0f) return@post
+
+            val baseVideoRatio = if (primaryVideoAspectRatio > 0f) primaryVideoAspectRatio else {
+                val format = if (::player.isInitialized) player.videoFormat else null
+                if (format != null && format.width > 0 && format.height > 0) {
+                    val rot = format.rotationDegrees
+                    val vw = if (rot == 90 || rot == 270) format.height else format.width
+                    val vh = if (rot == 90 || rot == 270) format.width else format.height
+                    vw.toFloat() / vh.toFloat()
+                } else 16f / 9f
+            }
+
+            // 1. Size the canvas box to the target aspect, fitted in the parent.
+            val containerRatio = containerWidth / containerHeight
+            val canvasW: Float
+            val canvasH: Float
+            if (targetRatio > containerRatio) {
+                canvasW = containerWidth
+                canvasH = containerWidth / targetRatio
+            } else {
+                canvasW = containerHeight * targetRatio
+                canvasH = containerHeight
+            }
+            val canvasLp = canvasContainer.layoutParams as FrameLayout.LayoutParams
+            canvasLp.width = canvasW.toInt()
+            canvasLp.height = canvasH.toInt()
+            canvasLp.gravity = Gravity.CENTER
+            canvasContainer.layoutParams = canvasLp
+            canvasContainer.clipChildren = true
+            canvasContainer.clipToPadding = true
+            mainVideoMaskContainer?.clipChildren = true
+            mainVideoMaskContainer?.clipToPadding = true
+
+            // 2. Fit the video inside the canvas, then apply the pinch/drag transform.
+            val fitW: Float
+            val fitH: Float
+            if (baseVideoRatio > targetRatio) {
+                fitW = canvasW
+                fitH = canvasW / baseVideoRatio
+            } else {
+                fitW = canvasH * baseVideoRatio
+                fitH = canvasH
+            }
+            val playerLp = playerView.layoutParams as FrameLayout.LayoutParams
+            playerLp.width = fitW.toInt()
+            playerLp.height = fitH.toInt()
+            playerLp.gravity = Gravity.CENTER
+            playerView.layoutParams = playerLp
+            playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+            applyRatioTransformToPlayer()
+
+            val hwCanvas = findViewById<com.tharunbirla.librecuts.customviews.HandwritingCanvasView>(R.id.handwritingCanvasView)
+            val overlays = listOf(textOverlayView, draggableTextOverlay, imageOverlayView, draggableImageOverlay, cropOverlayView, videoMaskOverlayView, hwCanvas)
+            for (overlay in overlays) {
+                overlay?.let {
+                    val overlayParams = it.layoutParams as FrameLayout.LayoutParams
+                    overlayParams.width = FrameLayout.LayoutParams.MATCH_PARENT
+                    overlayParams.height = FrameLayout.LayoutParams.MATCH_PARENT
+                    overlayParams.gravity = Gravity.CENTER
+                    it.layoutParams = overlayParams
+                    it.translationX = 0f
+                    it.translationY = 0f
+                }
+            }
+
+            textOverlayView?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            draggableTextOverlay?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            imageOverlayView?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            draggableImageOverlay?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            draggableBlurBoxOverlay?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            cropOverlayView?.setVideoSize(canvasW.toInt(), canvasH.toInt())
+            updateCanvasBackgroundPreview()
+        }
+    }
+
+    /** Apply the live pinch/drag framing to the player (scale about its centre). */
+    private fun applyRatioTransformToPlayer() {
+        val canvasW = canvasContainer.width.toFloat().takeIf { it > 0f } ?: return
+        val canvasH = canvasContainer.height.toFloat().takeIf { it > 0f } ?: return
+        playerView.scaleX = ratioLiveScale
+        playerView.scaleY = ratioLiveScale
+        playerView.translationX = ratioLiveOffsetX * canvasW
+        playerView.translationY = ratioLiveOffsetY * canvasH
+    }
+
+    /**
+     * One- and two-finger framing on the transparent gesture layer that
+     * sits on top of the preview while a preset ratio is being edited
+     * (CapCut: "Use both fingers to resize your video"). Pinch zooms the
+     * video inside the canvas, one-finger drag moves it; the change is
+     * committed to the CanvasRatio op only when the gesture ends, so each
+     * gesture is a single undo step.
+     */
+    private fun setupRatioGestureView() {
+        val gestureView = findViewById<View>(R.id.ratioGestureView) ?: return
+        var activePointerId = -1
+        var lastX = 0f
+        var lastY = 0f
+        var isScaling = false
+        var gestureChanged = false
+
+        val scaleDetector = android.view.ScaleGestureDetector(this,
+            object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScaleBegin(detector: android.view.ScaleGestureDetector): Boolean {
+                    isScaling = true
+                    ratioGestureScaleBase = ratioLiveScale
+                    return true
+                }
+
+                override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
+                    ratioLiveScale = (ratioGestureScaleBase * detector.scaleFactor).coerceIn(1f, 4f)
+                    gestureChanged = true
+                    applyRatioTransformToPlayer()
+                    return true
+                }
+
+                override fun onScaleEnd(detector: android.view.ScaleGestureDetector) {
+                    isScaling = false
+                    commitRatioGestureIfChanged { gestureChanged = false }
+                }
+            })
+
+        gestureView.setOnTouchListener { _, event ->
+            scaleDetector.onTouchEvent(event)
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    activePointerId = event.getPointerId(0)
+                    lastX = event.x
+                    lastY = event.y
+                    ratioGestureOffsetBaseX = ratioLiveOffsetX
+                    ratioGestureOffsetBaseY = ratioLiveOffsetY
+                    true
+                }
+                android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Second finger: a pinch takes over; drop the drag anchor.
+                    activePointerId = -1
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (!isScaling && activePointerId != -1) {
+                        val idx = event.findPointerIndex(activePointerId)
+                        if (idx != -1) {
+                            val canvasW = canvasContainer.width.toFloat()
+                            val canvasH = canvasContainer.height.toFloat()
+                            if (canvasW > 0f && canvasH > 0f) {
+                                ratioLiveOffsetX = (ratioGestureOffsetBaseX + (event.getX(idx) - lastX) / canvasW).coerceIn(-0.5f, 0.5f)
+                                ratioLiveOffsetY = (ratioGestureOffsetBaseY + (event.getY(idx) - lastY) / canvasH).coerceIn(-0.5f, 0.5f)
+                                gestureChanged = true
+                                applyRatioTransformToPlayer()
+                            }
+                        }
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_POINTER_UP -> {
+                    // Pinch ended; the remaining finger becomes the drag anchor.
+                    val upId = event.getPointerId(event.actionIndex)
+                    if (upId == activePointerId) activePointerId = -1
+                    val remaining = if (event.pointerCount > 1) event.getPointerId(if (event.actionIndex == 0) 1 else 0) else -1
+                    if (remaining != -1) {
+                        activePointerId = remaining
+                        val idx = event.findPointerIndex(remaining)
+                        if (idx != -1) {
+                            lastX = event.getX(idx)
+                            lastY = event.getY(idx)
+                            ratioGestureOffsetBaseX = ratioLiveOffsetX
+                            ratioGestureOffsetBaseY = ratioLiveOffsetY
+                        }
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    activePointerId = -1
+                    if (!isScaling) commitRatioGestureIfChanged { gestureChanged = false }
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    /** Commit the live framing to the op (one undo step); skip a no-op. */
+    private fun commitRatioGestureIfChanged(onDone: () -> Unit = {}) {
+        val current = viewModel.project.value?.operations
+            ?.filterIsInstance<EditOperation.CanvasRatio>()?.lastOrNull()
+        if (current == null) {
+            onDone()
+            return
+        }
+        val sameScale = kotlin.math.abs(current.effectiveScale - ratioLiveScale) < 0.001f
+        val sameX = kotlin.math.abs(current.effectiveOffsetX - ratioLiveOffsetX) < 0.001f
+        val sameY = kotlin.math.abs(current.effectiveOffsetY - ratioLiveOffsetY) < 0.001f
+        if (sameScale && sameX && sameY) {
+            onDone()
+            return
+        }
+        viewModel.updateCanvasRatioTransform(ratioLiveScale, ratioLiveOffsetX, ratioLiveOffsetY)
+        onDone()
     }
 
     private fun resetCropPreview() {
@@ -2473,6 +2746,8 @@ class VideoEditingActivity : AppCompatActivity() {
             playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             playerView.translationX = 0f
             playerView.translationY = 0f
+            playerView.scaleX = 1f
+            playerView.scaleY = 1f
 
             val hwCanvas = findViewById<com.tharunbirla.librecuts.customviews.HandwritingCanvasView>(R.id.handwritingCanvasView)
             val overlays = listOf(textOverlayView, draggableTextOverlay, imageOverlayView, draggableImageOverlay, cropOverlayView, videoMaskOverlayView, hwCanvas)
@@ -2959,6 +3234,9 @@ class VideoEditingActivity : AppCompatActivity() {
         cropEditingToolbar?.visibility = View.GONE
         subtitlesEditingToolbar?.visibility = View.GONE
         backgroundEditingToolbar?.visibility = View.GONE
+        // The Ratio pinch/drag layer must not survive leaving the sheet —
+        // it sits on top of the preview and would swallow every tap.
+        findViewById<View>(R.id.ratioGestureView)?.visibility = View.GONE
     }
 
     private fun enterTextEditingMode(isReEditing: Boolean = false) {
@@ -3995,6 +4273,9 @@ class VideoEditingActivity : AppCompatActivity() {
             "16:9" -> 16f / 9f
             "9:16" -> 9f / 16f
             "1:1" -> 1f
+            "4:3" -> 4f / 3f
+            "3:4" -> 3f / 4f
+            "5:8" -> 5f / 8f
             else -> return rect
         }
         if (videoRatio > targetRatio) {
@@ -4013,16 +4294,26 @@ class VideoEditingActivity : AppCompatActivity() {
         closeActiveEditingModes()
         cropEditingToolbar?.visibility = View.VISIBLE
         editingControlsWrapper.visibility = View.GONE
-        
+
+        val ratioOp = viewModel.project.value?.operations
+            ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.CanvasRatio>()
+            ?.lastOrNull()
         val cropOp = viewModel.project.value?.operations
             ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.Crop>()
             ?.lastOrNull()
 
+        initialRatioOperation = ratioOp
         initialCropOperation = cropOp
-        val currentRatio = cropOp?.aspectRatio ?: "Original"
-            
+        val currentRatio = ratioOp?.aspectRatio ?: cropOp?.aspectRatio ?: "Original"
+
         updateCropUi(currentRatio)
-        resetCropPreview()
+        if (ratioOp != null) {
+            // A canvas ratio stays live while editing (picking a ratio must
+            // show the result immediately, like CapCut).
+            applyCanvasRatioPreview(ratioOp)
+        } else {
+            resetCropPreview()
+        }
 
         if (currentRatio == "Custom" && cropOp != null) {
             cropOverlayView?.setCropBounds(
@@ -4037,7 +4328,7 @@ class VideoEditingActivity : AppCompatActivity() {
             cropOverlayView?.setCropBounds(bounds.left, bounds.top, bounds.width(), bounds.height())
             cropOverlayView?.visibility = View.GONE
         }
-        
+
         if (::player.isInitialized && player.isPlaying) {
             player.pause()
         }
@@ -4046,9 +4337,17 @@ class VideoEditingActivity : AppCompatActivity() {
     private fun exitCropEditingMode() {
         cropEditingToolbar?.visibility = View.GONE
         cropOverlayView?.visibility = View.GONE
+        findViewById<View>(R.id.ratioGestureView)?.visibility = View.GONE
         editingControlsWrapper.visibility = View.VISIBLE
         setActiveToolButton(0)
 
+        val ratioOp = viewModel.project.value?.operations
+            ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.CanvasRatio>()
+            ?.lastOrNull()
+        if (ratioOp != null) {
+            applyCanvasRatioPreview(ratioOp)
+            return
+        }
         val cropOp = viewModel.project.value?.operations
             ?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.Crop>()
             ?.lastOrNull()
@@ -4433,9 +4732,13 @@ class VideoEditingActivity : AppCompatActivity() {
     private fun updateCropUi(ratio: String) {
         val toolbar = cropEditingToolbar ?: return
         val ratios = mapOf(
-            "16:9" to Triple(R.id.bg16_9, R.id.ic16_9, R.id.txt16_9),
+            "Original" to Triple(R.id.bgOriginal, R.id.icOriginal, R.id.txtOriginal),
             "9:16" to Triple(R.id.bg9_16, R.id.ic9_16, R.id.txt9_16),
+            "16:9" to Triple(R.id.bg16_9, R.id.ic16_9, R.id.txt16_9),
             "1:1" to Triple(R.id.bg1_1, R.id.ic1_1, R.id.txt1_1),
+            "4:3" to Triple(R.id.bg4_3, R.id.ic4_3, R.id.txt4_3),
+            "3:4" to Triple(R.id.bg3_4, R.id.ic3_4, R.id.txt3_4),
+            "5:8" to Triple(R.id.bg5_8, R.id.ic5_8, R.id.txt5_8),
             "Custom" to Triple(R.id.bgCustom, R.id.icCustom, R.id.txtCustom)
         )
 
@@ -4454,6 +4757,11 @@ class VideoEditingActivity : AppCompatActivity() {
         }
 
         cropOverlayView?.visibility = if (ratio == "Custom") View.VISIBLE else View.GONE
+        // Pinch/drag hint + gesture layer only for canvas ratios (Custom
+        // edits the cut rectangle instead).
+        val isCanvasRatio = ratio != "Custom"
+        toolbar.findViewById<View>(R.id.tvRatioHint)?.visibility = if (isCanvasRatio) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.ratioGestureView)?.visibility = if (isCanvasRatio) View.VISIBLE else View.GONE
     }
 
     private fun splitSelectedVideo() {
@@ -7607,6 +7915,11 @@ class VideoEditingActivity : AppCompatActivity() {
     }
 
     private fun triggerCanvasLayoutUpdate() {
+        val ratioOps = viewModel.project.value?.operations?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.CanvasRatio>()
+        if (ratioOps != null && ratioOps.isNotEmpty()) {
+            applyCanvasRatioPreview(ratioOps.last())
+            return
+        }
         val cropOps = viewModel.project.value?.operations?.filterIsInstance<com.tharunbirla.librecuts.models.EditOperation.Crop>()
         if (cropOps != null && cropOps.isNotEmpty() && cropEditingToolbar?.visibility != View.VISIBLE) {
             applyCropPreview(cropOps.last().aspectRatio)

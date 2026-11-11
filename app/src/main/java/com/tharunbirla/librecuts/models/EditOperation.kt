@@ -71,7 +71,47 @@ sealed class EditOperation : Serializable {
             }
         }
     }
-    
+
+    /**
+     * CapCut-style canvas ratio (the "Ratio" tool): unlike [Crop], which
+     * CUTS pixels, this changes the OUTPUT CANVAS aspect and keeps the whole
+     * video as a layer inside it — fit by default, pinch to zoom ([scale])
+     * and drag to reposition ([offsetX]/[offsetY], video-centre offset in
+     * canvas fractions). Empty canvas area is filled by the CanvasBackground
+     * op (blur / colour / image) or black. "Original" means the source
+     * aspect (no canvas change). One CanvasRatio op at a time; setting a
+     * preset removes any Crop cut op and vice versa, so preview == export.
+     */
+    data class CanvasRatio(
+        val aspectRatio: String,
+        val scale: Float = 1f,
+        val offsetX: Float = 0f,
+        val offsetY: Float = 0f,
+        val id: String = System.nanoTime().toString()
+    ) : EditOperation() {
+        init {
+            require(aspectRatio in listOf("Original", "16:9", "9:16", "1:1", "4:3", "3:4", "5:8")) {
+                "Unsupported canvas ratio: $aspectRatio"
+            }
+        }
+
+        /** Zoom factor, safe against an old/missing value (Gson leaves it 0). */
+        val effectiveScale: Float get() = if (scale <= 0f) 1f else scale.coerceIn(1f, 4f)
+        val effectiveOffsetX: Float get() = offsetX.coerceIn(-0.5f, 0.5f)
+        val effectiveOffsetY: Float get() = offsetY.coerceIn(-0.5f, 0.5f)
+
+        /** Width / height of the canvas, or null for "Original" (source aspect). */
+        val ratioValue: Float? get() = when (aspectRatio) {
+            "16:9" -> 16f / 9f
+            "9:16" -> 9f / 16f
+            "1:1" -> 1f
+            "4:3" -> 4f / 3f
+            "3:4" -> 3f / 4f
+            "5:8" -> 5f / 8f
+            else -> null // "Original"
+        }
+    }
+
     /**
      * Text overlay operation: Adds customizable text to the video at specified position and size.
      * Supports 7 predefined positions (Bottom Right, Top Right, Top Left, Bottom Left, Center Bottom, Center Top, Center Align)

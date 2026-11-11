@@ -575,6 +575,93 @@ class VideoEditingViewModel : ViewModel() {
      * @return Pair of (list of filter stages, final stream label) — e.g. (["[0:v]crop=...[v0]", "[v0]drawtext=...[v1]"], "[v1]")
      *         If no video filters needed, returns (emptyList, "[0:v]")
      */
+    /**
+     * CapCut-style canvas composition for a [EditOperation.CanvasRatio] op.
+     *
+     * The input frame is fitted (then zoomed by [EditOperation.CanvasRatio.scale]
+     * and shifted by its offsets) onto a canvas of the target aspect whose
+     * long edge equals the input's long edge, so a later long-edge resolution
+     * scale still works. Empty canvas area is filled by the CanvasBackground
+     * op (blur / image / colour) or black. Canvas sizes are concrete numbers
+     * computed from [sourceWidth]/[sourceHeight] (see the note in the body).
+     *
+     * Runs FIRST inside [buildVideoFilterStages] so text / blur-box /
+     * subtitle overlays are drawn on the canvas (their coordinates are
+     * canvas-relative), and so a BLUR background is built from the raw video
+     * rather than from the composited overlays.
+     */
+    private fun buildCanvasRatioStages(
+        inputLabel: String,
+        ratioOp: EditOperation.CanvasRatio,
+        bgOp: EditOperation.CanvasBackground?,
+        bgImageIndex: Int,
+        stageIndex: Int,
+        sourceWidth: Int,
+        sourceHeight: Int
+    ): Pair<List<String>, String> {
+        val ratio = ratioOp.ratioValue ?: return emptyList<String>() to inputLabel
+        if (sourceWidth <= 0 || sourceHeight <= 0) return emptyList<String>() to inputLabel
+        // Canvas sizes are CONCRETE pixel numbers computed in Kotlin from
+        // the source frame size: runtime FFmpeg expressions would be
+        // re-evaluated against the SCALED frame after the first scale
+        // (iw/ih change), which made the blur-background crop compute
+        // 3412x3412 from a 3412x1920 frame and fail (verified on host
+        // FFmpeg). Concrete sizes are also what the existing
+        // canvas-background code does.
+        val longEdge = maxOf(sourceWidth, sourceHeight)
+        var canvasW: Int
+        var canvasH: Int
+        if (ratio >= 1f) {
+            canvasW = longEdge
+            canvasH = Math.round(longEdge / ratio)
+        } else {
+            canvasH = longEdge
+            canvasW = Math.round(longEdge * ratio)
+        }
+        if (canvasW % 2 != 0) canvasW -= 1
+        if (canvasH % 2 != 0) canvasH -= 1
+        if (canvasW <= 0 || canvasH <= 0) return emptyList<String>() to inputLabel
+
+        val scale = ratioOp.effectiveScale
+        val ox = String.format(java.util.Locale.US, "%.4f", ratioOp.effectiveOffsetX)
+        val oy = String.format(java.util.Locale.US, "%.4f", ratioOp.effectiveOffsetY)
+        val overlayX = "(W-w)/2+$ox*W"
+        val overlayY = "(H-h)/2+$oy*H"
+
+        val stages = mutableListOf<String>()
+        val bgLabel = "[ratio_bg_$stageIndex]"
+        val fgLabel = "[ratio_fg_$stageIndex]"
+        val outLabel = "[v$stageIndex]"
+
+        // Foreground: fit into the canvas, then pinch-zoom.
+        val fgScale = "scale=$canvasW:$canvasH:force_original_aspect_ratio=decrease" +
+            if (scale > 1f) {
+                ",scale='trunc(iw*${String.format(java.util.Locale.US, "%.3f", scale)}/2)*2':'trunc(ih*${String.format(java.util.Locale.US, "%.3f", scale)}/2)*2'"
+            } else ""
+
+        when {
+            bgOp?.type == EditOperation.CanvasBackground.BackgroundType.BLUR -> {
+                val blur = bgOp.blurRadius
+                stages.add("${inputLabel}split=2[ratio_bg_src_$stageIndex][ratio_fg_src_$stageIndex]")
+                stages.add("[ratio_bg_src_$stageIndex]format=yuv420p,scale=$canvasW:$canvasH:force_original_aspect_ratio=increase,crop=$canvasW:$canvasH,boxblur=$blur$bgLabel")
+                stages.add("[ratio_fg_src_$stageIndex]$fgScale$fgLabel")
+            }
+            bgOp?.type == EditOperation.CanvasBackground.BackgroundType.IMAGE && bgImageIndex != -1 -> {
+                stages.add("[$bgImageIndex:v]scale=$canvasW:$canvasH:force_original_aspect_ratio=increase,crop=$canvasW:$canvasH$bgLabel")
+                stages.add("${inputLabel}$fgScale$fgLabel")
+            }
+            else -> {
+                val color = bgOp?.colorHex?.takeIf { it.startsWith("#") } ?: "black"
+                stages.add("color=c=$color:s=${canvasW}x${canvasH}:r=30$bgLabel")
+                stages.add("${inputLabel}$fgScale$fgLabel")
+            }
+        }
+        // shortest=1: the colour source (and a looped image) are endless;
+        // without it the export would run forever.
+        stages.add("$bgLabel$fgLabel" + "overlay=$overlayX:$overlayY:shortest=1,setsar=1,format=yuv420p$outLabel")
+        return stages to outLabel
+    }
+
     private fun buildVideoFilterStages(
         operations: List<EditOperation>,
         fontFilePath: String?,
@@ -582,11 +669,28 @@ class VideoEditingViewModel : ViewModel() {
         imageInputIndices: List<Pair<Int, EditOperation.AddImageOverlay>> = emptyList(),
         density: Float = 1.0f,
         sourceVideoHeight: Int = 1080,
-        shapedTextInputs: List<ShapedTextInput> = emptyList()
+        shapedTextInputs: List<ShapedTextInput> = emptyList(),
+        canvasRatioOp: EditOperation.CanvasRatio? = null,
+        bgOp: EditOperation.CanvasBackground? = null,
+        bgImageIndex: Int = -1,
+        ratioSourceWidth: Int = 0,
+        ratioSourceHeight: Int = 0
     ): Pair<List<String>, String> {
         val stages = mutableListOf<String>()
         var currentLabel = inputLabel
         var stageIndex = 0
+
+        // Canvas ratio first (see buildCanvasRatioStages): overlays are
+        // drawn on the canvas, and a BLUR background comes from raw video.
+        if (canvasRatioOp != null && canvasRatioOp.ratioValue != null) {
+            val (ratioStages, ratioLabel) = buildCanvasRatioStages(
+                currentLabel, canvasRatioOp, bgOp, bgImageIndex, stageIndex,
+                sourceWidth = ratioSourceWidth, sourceHeight = ratioSourceHeight
+            )
+            stages.addAll(ratioStages)
+            currentLabel = ratioLabel
+            stageIndex++
+        }
 
         // Process overlays first so their relative coordinates align with the uncropped original video, matching the UI.
         val overlayOps = operations.filterNot { it is EditOperation.Crop }
@@ -1128,6 +1232,8 @@ class VideoEditingViewModel : ViewModel() {
 
         // 5. Canvas Background Image Input
         val bgOp = operations.filterIsInstance<EditOperation.CanvasBackground>().lastOrNull()
+        // CapCut-style canvas ratio (one op at a time; see ViewModelExt).
+        val ratioOp = operations.filterIsInstance<EditOperation.CanvasRatio>().lastOrNull()
         var bgImageIndex = -1
         if (bgOp != null && bgOp.type == EditOperation.CanvasBackground.BackgroundType.IMAGE && bgOp.imageUri != null) {
             val bgPath = resolveUriToPath(bgOp.imageUri)
@@ -1454,7 +1560,12 @@ class VideoEditingViewModel : ViewModel() {
                 imageInputIndices = imageInputIndices,
                 density = density,
                 sourceVideoHeight = sourceVideoHeight,
-                shapedTextInputs = shapedTextInputs
+                shapedTextInputs = shapedTextInputs,
+                canvasRatioOp = ratioOp,
+                bgOp = bgOp,
+                bgImageIndex = bgImageIndex,
+                ratioSourceWidth = sourceVideoWidth,
+                ratioSourceHeight = sourceVideoHeight
             )
             filterParts.addAll(sourceVideoStages)
             val finalVideoLabel = "[fmtv]"
@@ -1667,8 +1778,11 @@ class VideoEditingViewModel : ViewModel() {
         // The merge path applies this per clip, but the non-merge path
         // previously ignored CanvasBackground entirely, so a BLUR/IMAGE/COLOR
         // canvas never showed up in a single-clip export.
+        // Skipped when a CanvasRatio op exists: the canvas stage inside
+        // buildVideoFilterStages composes the background onto the ratio
+        // canvas instead (applying it here too would pad twice).
         var bgApplied = false
-        if (bgOp != null) {
+        if (bgOp != null && ratioOp == null) {
             val bgW = if (sourceVideoWidth % 2 != 0) sourceVideoWidth - 1 else sourceVideoWidth
             val bgH = if (sourceVideoHeight % 2 != 0) sourceVideoHeight - 1 else sourceVideoHeight
             val fgScale = "scale=$bgW:$bgH:force_original_aspect_ratio=decrease"
@@ -1713,7 +1827,12 @@ class VideoEditingViewModel : ViewModel() {
             imageInputIndices = imageInputIndices,
             density = density,
             sourceVideoHeight = sourceVideoHeight,
-            shapedTextInputs = shapedTextInputs
+            shapedTextInputs = shapedTextInputs,
+            canvasRatioOp = ratioOp,
+            bgOp = bgOp,
+            bgImageIndex = bgImageIndex,
+            ratioSourceWidth = sourceVideoWidth,
+            ratioSourceHeight = sourceVideoHeight
         )
         filterComplexParts.addAll(videoStages)
 
@@ -1930,11 +2049,32 @@ class VideoEditingViewModel : ViewModel() {
         val operations = currentProject.operations
             .filterNot { it is EditOperation.Merge } // Skip merge for preview
 
-        if (operations.none { it is EditOperation.Crop || it is EditOperation.AddText || it is EditOperation.AddBlurBox || it is EditOperation.AddSubtitles }) {
+        if (operations.none { it is EditOperation.Crop || it is EditOperation.CanvasRatio || it is EditOperation.AddText || it is EditOperation.AddBlurBox || it is EditOperation.AddSubtitles }) {
             return null // No visual operations to preview
         }
 
         val videoOps = operations.filter { it is EditOperation.Crop || it is EditOperation.AddText || it is EditOperation.AddBlurBox || it is EditOperation.AddSubtitles }
+        val ratioOp = operations.filterIsInstance<EditOperation.CanvasRatio>().lastOrNull()
+        // Source frame size, so a CanvasRatio op can compute its canvas.
+        var previewSrcW = 0
+        var previewSrcH = 0
+        try {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(sourceFilePath)
+                val wStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val hStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                val rStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                val w = wStr?.toIntOrNull() ?: 0
+                val h = hStr?.toIntOrNull() ?: 0
+                val r = rStr?.toIntOrNull() ?: 0
+                if (r == 90 || r == 270) { previewSrcW = h; previewSrcH = w } else { previewSrcW = w; previewSrcH = h }
+            } finally {
+                retriever.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read source size for preview: ${e.message}")
+        }
         val trimOp = operations.filterIsInstance<EditOperation.Trim>().lastOrNull()
 
         val cmd = StringBuilder()
@@ -1963,7 +2103,10 @@ class VideoEditingViewModel : ViewModel() {
             fontFilePath = fontFilePath,
             density = density,
             sourceVideoHeight = 1080,
-            shapedTextInputs = shapedTextInputs
+            shapedTextInputs = shapedTextInputs,
+            canvasRatioOp = ratioOp,
+            ratioSourceWidth = previewSrcW,
+            ratioSourceHeight = previewSrcH
         )
         if (videoStages.isNotEmpty()) {
             cmd.append(" -filter_complex \"${videoStages.joinToString(";")}\"")
