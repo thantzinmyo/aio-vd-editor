@@ -1,9 +1,14 @@
-// The Media3 Transformer APIs are marked @UnstableApi. The opt-in must be
-// at FILE level: a class-level @OptIn did NOT satisfy lint's
-// UnsafeOptInUsageError check (CI #23 — all 44 errors remained).
-@file:OptIn(UnstableApi::class)
-
+// The Media3 Transformer APIs are marked @UnstableApi. The opt-in MUST
+// use androidx.annotation.OptIn (markerClass = ...), NOT kotlin.OptIn:
+// lint's UnsafeOptInUsageError detector only reads the "markerClass"
+// attribute, so kotlin.OptIn (whose attribute is "value") is silently
+// ignored — verified by decompiling the detector (CI #23 class-level
+// kotlin.OptIn and CI #24 file-level kotlin.OptIn both left all 44
+// errors in place). Applied on the class (the detector walks up to the
+// enclosing class from every usage in this file).
 package com.tharunbirla.librecuts.services
+
+import androidx.annotation.OptIn
 
 import android.content.Context
 import android.media.MediaMetadataRetriever
@@ -83,10 +88,8 @@ data class GpuExportParams(
  * onto the same onProgress / notification / broadcast wiring the FFmpeg
  * path uses, so the export screen, notification and done screen are
  * unchanged.
- *
- * (Opt-in to Media3's @UnstableApi is at file level — see the top of
- * this file.)
  */
+@OptIn(markerClass = [UnstableApi::class])
 class GpuExportEngine(private val context: Context) {
 
     sealed interface Result {
