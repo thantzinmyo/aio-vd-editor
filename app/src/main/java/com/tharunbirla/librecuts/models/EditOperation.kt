@@ -545,6 +545,7 @@ val EditOperation.id: String
         is EditOperation.MirrorMain -> id
         is EditOperation.MaskMain -> id
         is EditOperation.Crop -> id
+        is EditOperation.CanvasRatio -> id
         is EditOperation.AddText -> id
         is EditOperation.Merge -> id
         is EditOperation.MuteAudio -> id
