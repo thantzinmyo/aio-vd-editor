@@ -219,4 +219,8 @@
     <string name="str_haptic_feedback">Haptic Feedback</string>
     <string name="str_haptic_enabled_desc">Enabled (In-app vibrations active)</string>
     <string name="str_haptic_disabled_desc">Disabled (In-app vibrations muted)</string>
+    <string name="str_perm_first_launch_title">Permissions</string>
+    <string name="str_perm_first_launch_message">To import videos and photos, record voice-overs and show export progress, AIO VD Editor needs access to your media, microphone and notifications. You can change this anytime in Settings.</string>
+    <string name="str_perm_allow">Allow</string>
+    <string name="str_perm_not_now">Not now</string>
 </resources>

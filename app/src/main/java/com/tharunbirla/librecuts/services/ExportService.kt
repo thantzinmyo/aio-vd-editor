@@ -34,11 +34,14 @@ class ExportService : Service() {
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private lateinit var ffmpegEngine: FFmpegRenderEngine
+    private lateinit var gpuEngine: GpuExportEngine
 
     companion object {
         const val ACTION_EXPORT_PROGRESS = "com.tharunbirla.librecuts.ACTION_EXPORT_PROGRESS"
         const val ACTION_EXPORT_SUCCESS = "com.tharunbirla.librecuts.ACTION_EXPORT_SUCCESS"
         const val ACTION_EXPORT_FAILURE = "com.tharunbirla.librecuts.ACTION_EXPORT_FAILURE"
+        /** Sent by the editor's Cancel button: stops whichever engine is running. */
+        const val ACTION_CANCEL_EXPORT = "com.tharunbirla.librecuts.ACTION_CANCEL_EXPORT"
 
         const val EXTRA_PROGRESS = "extra_progress"
         const val EXTRA_ENCODED_SECS = "extra_encoded_secs"
@@ -50,12 +53,34 @@ class ExportService : Service() {
         const val EXTRA_CONCAT_FILE_PATH = "extra_concat_file_path"
         const val EXTRA_TOTAL_DURATION_SECS = "extra_total_duration_secs"
         const val EXTRA_IS_AUDIO_ONLY = "extra_is_audio_only"
+
+        /** GPU fast path (Media3 Transformer) — set by the editor when the router picks it. */
+        const val EXTRA_USE_GPU = "extra_use_gpu"
+        const val EXTRA_GPU_SOURCE_PATH = "extra_gpu_source_path"
+        const val EXTRA_GPU_TRIM_START_MS = "extra_gpu_trim_start_ms"
+        const val EXTRA_GPU_TRIM_END_MS = "extra_gpu_trim_end_ms"
+        const val EXTRA_GPU_SPEED = "extra_gpu_speed"
+        const val EXTRA_GPU_TARGET_RES = "extra_gpu_target_res"
+        const val EXTRA_GPU_TARGET_FPS = "extra_gpu_target_fps"
+        const val EXTRA_GPU_CROP_ASPECT = "extra_gpu_crop_aspect"
+        const val EXTRA_GPU_CROP_X = "extra_gpu_crop_x"
+        const val EXTRA_GPU_CROP_Y = "extra_gpu_crop_y"
+        const val EXTRA_GPU_CROP_W = "extra_gpu_crop_w"
+        const val EXTRA_GPU_CROP_H = "extra_gpu_crop_h"
+    }
+
+    /** One outcome shape for both engines, so the save / notify / broadcast tail is shared. */
+    private sealed interface ExportOutcome {
+        data class Success(val outputPath: String) : ExportOutcome
+        data class Failure(val error: String) : ExportOutcome
+        object Cancelled : ExportOutcome
     }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         ffmpegEngine = FFmpegRenderEngine(this)
+        gpuEngine = GpuExportEngine(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -64,30 +89,59 @@ class ExportService : Service() {
             return START_NOT_STICKY
         }
 
-        val command = intent.getStringExtra(EXTRA_COMMAND) ?: return START_NOT_STICKY
+        // Cancel action: the editor's Cancel button sends this when the
+        // GPU engine is running (FFmpegKit.cancel is global, so it covers
+        // the FFmpeg path on its own; the Transformer needs a direct call).
+        if (intent.action == ACTION_CANCEL_EXPORT) {
+            if (::gpuEngine.isInitialized) gpuEngine.cancel()
+            serviceScope.launch { ffmpegEngine.cancelAllSessions() }
+            return START_NOT_STICKY
+        }
+
+        val useGpu = intent.getBooleanExtra(EXTRA_USE_GPU, false)
         val tempOutputPath = intent.getStringExtra(EXTRA_TEMP_OUTPUT_PATH) ?: return START_NOT_STICKY
         val concatFilePath = intent.getStringExtra(EXTRA_CONCAT_FILE_PATH)
         val durationSecs = intent.getDoubleExtra(EXTRA_TOTAL_DURATION_SECS, 0.0)
         val isAudioOnly = intent.getBooleanExtra(EXTRA_IS_AUDIO_ONLY, false)
 
+        // FFmpeg path still needs the command; the GPU path does not.
+        val command = if (useGpu) null else intent.getStringExtra(EXTRA_COMMAND)
+            ?: return START_NOT_STICKY
+
         startForeground(NOTIFICATION_ID, buildNotification(0, "Exporting..."))
 
         serviceScope.launch {
             try {
-                val result = ffmpegEngine.exportFinal(
-                    ffmpegCommand = command,
-                    totalDurationSecs = durationSecs,
-                    onProgress = { progress, encodedSecs ->
+                val outcome: ExportOutcome = if (useGpu) {
+                    val gpuParams = buildGpuParams(intent, tempOutputPath)
+                    when (val r = gpuEngine.export(gpuParams) { progress, encodedSecs ->
                         updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
                         broadcastProgress(progress, encodedSecs)
+                    }) {
+                        is GpuExportEngine.Result.Success -> ExportOutcome.Success(r.outputPath)
+                        is GpuExportEngine.Result.Failure -> ExportOutcome.Failure(r.error)
+                        GpuExportEngine.Result.Cancelled -> ExportOutcome.Cancelled
                     }
-                )
+                } else {
+                    when (val r = ffmpegEngine.exportFinal(
+                        ffmpegCommand = command,
+                        totalDurationSecs = durationSecs,
+                        onProgress = { progress, encodedSecs ->
+                            updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
+                            broadcastProgress(progress, encodedSecs)
+                        }
+                    )) {
+                        is FFmpegRenderEngine.RenderResult.Success -> ExportOutcome.Success(r.outputPath)
+                        is FFmpegRenderEngine.RenderResult.Failure -> ExportOutcome.Failure(r.error)
+                        is FFmpegRenderEngine.RenderResult.Cancelled -> ExportOutcome.Cancelled
+                    }
+                }
 
                 val tempFile = File(tempOutputPath)
                 val concatFile = concatFilePath?.let { File(it) }
 
-                when (result) {
-                    is FFmpegRenderEngine.RenderResult.Success -> {
+                when (outcome) {
+                    is ExportOutcome.Success -> {
                         val savedUri = saveVideoToGallery(tempFile, isAudioOnly)
                         if (savedUri != null) {
                             showCompletionNotification("Export Complete", "Video saved to gallery", savedUri)
@@ -98,12 +152,12 @@ class ExportService : Service() {
                             broadcastFailure("Failed to save video to gallery")
                         }
                     }
-                    is FFmpegRenderEngine.RenderResult.Failure -> {
+                    is ExportOutcome.Failure -> {
                         showCompletionNotification("Export Failed", "Error during rendering", null)
-                        broadcastFailure(result.error)
-                        Log.e(TAG, "Export failed: ${result.error}")
+                        broadcastFailure(outcome.error)
+                        Log.e(TAG, "Export failed: ${outcome.error}")
                     }
-                    is FFmpegRenderEngine.RenderResult.Cancelled -> {
+                    is ExportOutcome.Cancelled -> {
                         showCompletionNotification("Export Cancelled", "The export was cancelled", null)
                         broadcastFailure("Export cancelled")
                     }
@@ -124,6 +178,28 @@ class ExportService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    private fun buildGpuParams(intent: Intent, tempOutputPath: String): GpuExportParams {
+        val cropAspect = intent.getStringExtra(EXTRA_GPU_CROP_ASPECT)
+        return GpuExportParams(
+            sourcePath = intent.getStringExtra(EXTRA_GPU_SOURCE_PATH) ?: "",
+            outputPath = tempOutputPath,
+            trimStartMs = intent.getLongExtra(EXTRA_GPU_TRIM_START_MS, 0L),
+            trimEndMs = intent.getLongExtra(EXTRA_GPU_TRIM_END_MS, 0L),
+            speed = intent.getFloatExtra(EXTRA_GPU_SPEED, 1f),
+            targetRes = intent.getIntExtra(EXTRA_GPU_TARGET_RES, 0),
+            targetFps = intent.getIntExtra(EXTRA_GPU_TARGET_FPS, 30),
+            crop = cropAspect?.let {
+                GpuCropSpec(
+                    aspectRatio = it,
+                    xFraction = intent.getFloatExtra(EXTRA_GPU_CROP_X, 0f),
+                    yFraction = intent.getFloatExtra(EXTRA_GPU_CROP_Y, 0f),
+                    wFraction = intent.getFloatExtra(EXTRA_GPU_CROP_W, 1f),
+                    hFraction = intent.getFloatExtra(EXTRA_GPU_CROP_H, 1f)
+                )
+            }
+        )
     }
 
     private fun createNotificationChannel() {

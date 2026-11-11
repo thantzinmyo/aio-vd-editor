@@ -623,6 +623,85 @@ class VideoEditingViewModel : ViewModel() {
     }
 
     /**
+     * Whether the GPU fast path (Media3 Transformer) can export this
+     * project — Phase 1 scope: a single video clip whose only operations
+     * are plain ones the GPU pipeline supports (Trim, SpeedMain without a
+     * reverse proxy, Crop). Everything else (text, blur boxes, subtitles,
+     * canvas ratio, audio tracks, multi-clip merges, audio-only, images)
+     * stays on the FFmpeg path.
+     *
+     * One more gate: Transformer's setFrameRate is a MAX — it can only
+     * drop frames, never invent them. If the chosen fps is above the
+     * effective source fps (source fps × speed), the GPU output would
+     * silently keep the source fps — FFmpeg duplicates frames instead, so
+     * route there. An unknown source fps (0) is allowed through: the
+     * mismatch only affects the output fps tag, not the picture, and
+     * forcing screen recordings (which often report no fps) onto the slow
+     * CPU path would defeat the point of the GPU fast path.
+     */
+    fun supportsGpuExport(sourceFilePath: String): Boolean {
+        val project = _project.value ?: return false
+        if (_exportAudioOnly.value) return false
+        if (isImagePath(sourceFilePath)) return false
+        val ops = project.operations
+        if (ops.any { it is EditOperation.Merge }) return false
+        var speed = 1f
+        for (op in ops) {
+            when (op) {
+                is EditOperation.Trim -> { }
+                is EditOperation.SpeedMain -> {
+                    if (op.proxyUri != null) return false
+                    speed = op.speed
+                }
+                is EditOperation.Crop -> { }
+                else -> return false
+            }
+        }
+        val sourceFps = probeSourceFrameRate(sourceFilePath)
+        if (sourceFps > 0f) {
+            val effectiveFps = sourceFps * speed
+            if (_exportFps.value.toFloat() > effectiveFps + 0.5f) return false
+        }
+        return true
+    }
+
+    /**
+     * GPU export parameters for the router, or null when
+     * [supportsGpuExport] is false. The Activity fills in [outputPath]
+     * (the service temp file) before starting ExportService. The last
+     * Trim / SpeedMain / Crop op wins, matching how the editor commits
+     * them.
+     */
+    fun buildGpuExportParams(
+        sourceFilePath: String,
+        outputPath: String
+    ): com.tharunbirla.librecuts.services.GpuExportParams? {
+        if (!supportsGpuExport(sourceFilePath)) return null
+        val ops = _project.value?.operations ?: return null
+        val trim = ops.filterIsInstance<EditOperation.Trim>().lastOrNull()
+        val speed = ops.filterIsInstance<EditOperation.SpeedMain>().lastOrNull()?.speed ?: 1f
+        val crop = ops.filterIsInstance<EditOperation.Crop>().lastOrNull()
+        return com.tharunbirla.librecuts.services.GpuExportParams(
+            sourcePath = sourceFilePath,
+            outputPath = outputPath,
+            trimStartMs = trim?.startMs ?: 0L,
+            trimEndMs = trim?.endMs ?: 0L,
+            speed = speed,
+            targetRes = _exportResolution.value,
+            targetFps = _exportFps.value,
+            crop = crop?.let {
+                com.tharunbirla.librecuts.services.GpuCropSpec(
+                    aspectRatio = it.aspectRatio,
+                    xFraction = it.xFraction,
+                    yFraction = it.yFraction,
+                    wFraction = it.wFraction,
+                    hFraction = it.hFraction
+                )
+            }
+        )
+    }
+
+    /**
      * Build the video portion of a filter_complex graph from non-merge, non-audio operations.
      *
      * @return Pair of (list of filter stages, final stream label) — e.g. (["[0:v]crop=...[v0]", "[v0]drawtext=...[v1]"], "[v1]")

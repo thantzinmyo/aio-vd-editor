@@ -269,6 +269,10 @@ class MainActivity : AppCompatActivity() {
         val isFirstLaunch = prefs.getBoolean("first_launch_v1", true)
         if (isFirstLaunch) {
             showOnboardingDialog(prefs)
+        } else {
+            // Existing installers upgrading to this build never saw the
+            // onboarding dialog — ask for the permissions now instead.
+            requestFirstLaunchPermissionsIfNeeded()
         }
 
         // Handle shared/intent videos
@@ -689,6 +693,67 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /**
+     * First-launch permissions: ask for everything the app needs (media,
+     * microphone, notifications) once, right at the start, instead of
+     * interrupting the user in the middle of importing, recording or
+     * exporting. Asked only once ever — if the user says no, the features
+     * that need them still ask again at the moment of use (media picker,
+     * voice-over, export), so nothing is lost.
+     */
+    private val firstLaunchPermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val denied = results.filterValues { !it }.keys
+        if (denied.isNotEmpty()) {
+            Log.d("MainActivity", "First-launch permissions denied: $denied")
+        }
+    }
+
+    private fun requestFirstLaunchPermissionsIfNeeded() {
+        val prefs = getSharedPreferences("librecuts_prefs", MODE_PRIVATE)
+        if (prefs.getBoolean("permissions_requested_first_launch", false)) return
+        // Mark as asked before showing anything, so this runs once ever
+        // even if the user dismisses the dialogs.
+        prefs.edit().putBoolean("permissions_requested_first_launch", true).apply()
+
+        val toRequest = firstLaunchPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (toRequest.isEmpty()) return
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.str_perm_first_launch_title)
+            .setMessage(R.string.str_perm_first_launch_message)
+            .setPositiveButton(R.string.str_perm_allow) { _, _ ->
+                firstLaunchPermissionsLauncher.launch(toRequest.toTypedArray())
+            }
+            .setNegativeButton(R.string.str_perm_not_now, null)
+            .show()
+    }
+
+    /** Same list the media picker asks for at use-time, plus the ones the
+     * editor asks for when exporting (notifications) and recording a
+     * voice-over (microphone). READ_MEDIA_VISUAL_USER_SELECTED is left
+     * out: the system grants it automatically when the user picks
+     * limited access in the photo picker. */
+    private fun firstLaunchPermissions(): List<String> {
+        val list = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.READ_MEDIA_VIDEO)
+            list.add(Manifest.permission.READ_MEDIA_IMAGES)
+            list.add(Manifest.permission.READ_MEDIA_AUDIO)
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            list.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (Build.VERSION.SDK_INT <= 28) {
+                list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+        list.add(Manifest.permission.RECORD_AUDIO)
+        return list
+    }
+
     private fun switchTab(tabIndex: Int) {
         val activeBg = ContextCompat.getDrawable(this, R.drawable.bg_nav_active_pill)
         val attrs = intArrayOf(android.R.attr.selectableItemBackgroundBorderless)
@@ -848,6 +913,9 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<View>(R.id.btnOnboardingGetStarted)?.setBounceClickListener {
             prefs.edit().putBoolean("first_launch_v1", false).apply()
             dialog.dismiss()
+            // Right after the welcome screen: ask for the permissions the
+            // app needs, instead of interrupting the user mid-task later.
+            requestFirstLaunchPermissionsIfNeeded()
         }
 
         dialog.show()

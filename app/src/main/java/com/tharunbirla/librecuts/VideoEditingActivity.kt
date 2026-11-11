@@ -5563,6 +5563,48 @@ class VideoEditingActivity : AppCompatActivity() {
                 tempOutputFile = File(cacheDir, "temp_video_${System.currentTimeMillis()}$ext")
                 val tempOutputPath = tempOutputFile.absolutePath
 
+                // GPU fast path (Phase 1): plain exports (trim / speed /
+                // crop / resize / fps) run through Media3 Transformer
+                // instead of the CPU FFmpeg filter graph. The service
+                // reports the same progress / success / failure broadcasts,
+                // so the export screen, notification and done screen are
+                // unchanged. Anything the GPU path cannot do falls through
+                // to the FFmpeg command below.
+                if (::tempInputFile.isInitialized &&
+                    viewModel.supportsGpuExport(sourceFilePath)
+                ) {
+                    val gpuParams = viewModel.buildGpuExportParams(sourceFilePath, tempOutputPath)
+                    if (gpuParams != null) {
+                        val totalDurationSecs = getTotalSequenceDuration() / 1000.0
+                        val intent = Intent(this@VideoEditingActivity, com.tharunbirla.librecuts.services.ExportService::class.java).apply {
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_USE_GPU, true)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_SOURCE_PATH, gpuParams.sourcePath)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_TRIM_START_MS, gpuParams.trimStartMs)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_TRIM_END_MS, gpuParams.trimEndMs)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_SPEED, gpuParams.speed)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_TARGET_RES, gpuParams.targetRes)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_TARGET_FPS, gpuParams.targetFps)
+                            gpuParams.crop?.let { crop ->
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_ASPECT, crop.aspectRatio)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_X, crop.xFraction)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_Y, crop.yFraction)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_W, crop.wFraction)
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CROP_H, crop.hFraction)
+                            }
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TEMP_OUTPUT_PATH, tempOutputPath)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TOTAL_DURATION_SECS, totalDurationSecs)
+                            putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_IS_AUDIO_ONLY, isAudioOnly)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        Toast.makeText(this@VideoEditingActivity, "Export started in background... (GPU fast path)", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+                }
+
                 var ffmpegCommand = viewModel.buildConsolidatedFFmpegCommand(
                     sourceFilePath = sourceFilePath,
                     outputFilePath = tempOutputPath,
@@ -5870,6 +5912,17 @@ class VideoEditingActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error cancelling FFmpeg sessions: ${e.message}")
             }
+        }
+        // The Transformer has no global cancel like FFmpegKit — tell the
+        // service to stop its GPU engine directly (harmless when the
+        // export is running on FFmpeg).
+        try {
+            val cancelIntent = Intent(this, com.tharunbirla.librecuts.services.ExportService::class.java).apply {
+                action = com.tharunbirla.librecuts.services.ExportService.ACTION_CANCEL_EXPORT
+            }
+            startService(cancelIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending export cancel to service: ${e.message}")
         }
         exportJob?.cancel()
         viewModel.exportError("Export cancelled")

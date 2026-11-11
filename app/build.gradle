@@ -87,6 +87,13 @@ android {
 dependencies {
     implementation 'com.google.android.exoplayer:exoplayer-core:2.19.1'
     implementation 'com.google.android.exoplayer:exoplayer-ui:2.19.1'
+    // GPU export pipeline (Phase 1): Media3 Transformer — hardware decode
+    // (MediaCodec) + OpenGL effects + hardware encode. Free, no account or
+    // key needed. 1.11.1 is the latest stable (setFrameRate, setSpeed and
+    // InAppMp4Muxer are all in). Kept alongside the old ExoPlayer 2.19.1
+    // preview player; migrating the preview to Media3 is a later cleanup.
+    implementation 'androidx.media3:media3-transformer:1.11.1'
+    implementation 'androidx.media3:media3-effect:1.11.1'
     implementation("com.antonkarpenko:ffmpeg-kit-full-gpl:2.1.0")
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'com.airbnb.android:lottie:3.4.0'
