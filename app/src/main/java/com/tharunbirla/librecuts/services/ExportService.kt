@@ -70,6 +70,7 @@ class ExportService : Service() {
         const val EXTRA_GPU_CANVAS_ASPECT = "extra_gpu_canvas_aspect"
         const val EXTRA_GPU_CANVAS_BLUR = "extra_gpu_canvas_blur"
         const val EXTRA_GPU_CANVAS_SCALE = "extra_gpu_canvas_scale"
+        const val EXTRA_GPU_OVERLAYS = "extra_gpu_overlays"
     }
 
     /** One outcome shape for both engines, so the save / notify / broadcast tail is shared. */
@@ -189,6 +190,16 @@ class ExportService : Service() {
     private fun buildGpuParams(intent: Intent, tempOutputPath: String): GpuExportParams {
         val cropAspect = intent.getStringExtra(EXTRA_GPU_CROP_ASPECT)
         val canvasAspect = intent.getFloatExtra(EXTRA_GPU_CANVAS_ASPECT, -1f)
+        // Phase 3 overlays travel as one Gson JSON string (texts,
+        // subtitles, images, mirror). A bad payload falls back to no
+        // overlays rather than failing the export.
+        val overlaySpecs = intent.getStringExtra(EXTRA_GPU_OVERLAYS)?.let { json ->
+            try {
+                com.google.gson.Gson().fromJson(json, GpuOverlaySpecs::class.java)
+            } catch (_: Exception) {
+                null
+            }
+        } ?: GpuOverlaySpecs()
         return GpuExportParams(
             sourcePath = intent.getStringExtra(EXTRA_GPU_SOURCE_PATH) ?: "",
             outputPath = tempOutputPath,
@@ -212,7 +223,11 @@ class ExportService : Service() {
                     blurRadius = intent.getIntExtra(EXTRA_GPU_CANVAS_BLUR, 0),
                     scale = intent.getFloatExtra(EXTRA_GPU_CANVAS_SCALE, 1f)
                 )
-            } else null
+            } else null,
+            texts = overlaySpecs.texts,
+            subtitles = overlaySpecs.subtitles,
+            images = overlaySpecs.images,
+            mirror = overlaySpecs.mirror
         )
     }
 

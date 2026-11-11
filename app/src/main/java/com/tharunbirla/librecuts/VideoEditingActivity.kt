@@ -66,6 +66,8 @@ import com.tharunbirla.librecuts.models.id
 import kotlinx.coroutines.Job
 import com.tharunbirla.librecuts.services.FFmpegRenderEngine
 import com.tharunbirla.librecuts.utils.ErrorCode
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 
 import com.tharunbirla.librecuts.viewmodels.*
 import com.tharunbirla.librecuts.viewmodels.VideoEditingViewModel
@@ -77,7 +79,12 @@ import java.util.Locale
 import androidx.media3.ui.AspectRatioFrameLayout
 
 
+// The preview player uses Media3 ExoPlayer APIs, which are marked
+// @UnstableApi. The opt-in MUST use androidx.annotation.OptIn
+// (markerClass = ...), NOT kotlin.OptIn — lint's detector only reads
+// the "markerClass" attribute (same lesson as GpuExportEngine, CI #22–#25).
 @Suppress("DEPRECATION")
+@OptIn(markerClass = [UnstableApi::class])
 class VideoEditingActivity : AppCompatActivity() {
 
     // UI Components
@@ -5574,7 +5581,11 @@ class VideoEditingActivity : AppCompatActivity() {
                 if (::tempInputFile.isInitialized &&
                     viewModel.supportsGpuExport(sourceFilePath)
                 ) {
-                    val gpuParams = viewModel.buildGpuExportParams(sourceFilePath, tempOutputPath)
+                    val gpuParams = viewModel.buildGpuExportParams(
+                        sourceFilePath,
+                        tempOutputPath,
+                        resources.displayMetrics.density
+                    )
                     if (gpuParams != null) {
                         val totalDurationSecs = getTotalSequenceDuration() / 1000.0
                         val intent = Intent(this@VideoEditingActivity, com.tharunbirla.librecuts.services.ExportService::class.java).apply {
@@ -5596,6 +5607,9 @@ class VideoEditingActivity : AppCompatActivity() {
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_ASPECT, canvas.aspectRatio)
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_BLUR, canvas.blurRadius)
                                 putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_CANVAS_SCALE, canvas.scale)
+                            }
+                            gpuParams.overlaysJson?.let { json ->
+                                putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_GPU_OVERLAYS, json)
                             }
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TEMP_OUTPUT_PATH, tempOutputPath)
                             putExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_TOTAL_DURATION_SECS, totalDurationSecs)

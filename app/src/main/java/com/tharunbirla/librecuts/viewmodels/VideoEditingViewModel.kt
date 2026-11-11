@@ -638,6 +638,17 @@ class VideoEditingViewModel : ViewModel() {
      * ignored. A CanvasRatio and a Crop op together also fall back
      * (the editor keeps them mutually exclusive, so this is defensive).
      *
+     * Phase 3: text, subtitle and image overlays are also allowed —
+     * they are pre-rendered to bitmaps and composited with
+     * OverlayEffect. Keyframed positions/opacity, letter spacing,
+     * subtitle blur bands / solid backgrounds, chroma-keyed or
+     * animated (GIF/video) images and masks still fall back to
+     * FFmpeg. MirrorMain (flip) is allowed too. Timed overlays (a
+     * text/image with start/end, or any subtitles) need no trim and
+     * 1x speed — their timestamps are in the source timeline, so a
+     * trim or a speed change would shift them; always-on overlays
+     * are fine with either.
+     *
      * One more gate: Transformer's setFrameRate is a MAX — it can only
      * drop frames, never invent them. If the chosen fps is above the
      * effective source fps (source fps × speed), the GPU output would
@@ -656,6 +667,7 @@ class VideoEditingViewModel : ViewModel() {
         var speed = 1f
         var canvasRatio: EditOperation.CanvasRatio? = null
         var canvasBg: EditOperation.CanvasBackground? = null
+        var hasTimedOverlay = false
         for (op in ops) {
             when (op) {
                 is EditOperation.Trim -> { }
@@ -673,9 +685,52 @@ class VideoEditingViewModel : ViewModel() {
                     canvasRatio = op
                 }
                 is EditOperation.CanvasBackground -> { canvasBg = op }
+                is EditOperation.AddText -> {
+                    // Keyframed position/opacity and letter spacing
+                    // have no GPU equivalent (the bitmap is
+                    // pre-rendered); borders, alignment and line
+                    // spacing are baked into the bitmap, so they are fine.
+                    if (op.positionKeyframes.isNotEmpty() ||
+                        op.opacityKeyframes.isNotEmpty() ||
+                        op.letterSpacing != 0f
+                    ) return false
+                    if (op.startTimeMs != null || op.endTimeMs != null) hasTimedOverlay = true
+                }
+                is EditOperation.AddSubtitles -> {
+                    // The blurred band and the solid background box
+                    // behind a cue have no GPU equivalent in v1.
+                    if (op.blurBackground || op.backgroundColor != "none") return false
+                    // Cues always carry times.
+                    hasTimedOverlay = true
+                }
+                is EditOperation.AddImageOverlay -> {
+                    if (op.chromaKeyColor != null ||
+                        op.positionKeyframes.isNotEmpty() ||
+                        op.opacityKeyframes.isNotEmpty() ||
+                        op.speedKeyframes.isNotEmpty() ||
+                        op.maskConfig.shape != EditOperation.MaskShape.NONE ||
+                        op.maskConfig.positionKeyframes.isNotEmpty() ||
+                        op.maskConfig.sizeKeyframes.isNotEmpty() ||
+                        op.maskConfig.rotationKeyframes.isNotEmpty() ||
+                        op.maskConfig.featherKeyframes.isNotEmpty() ||
+                        op.isMirrored
+                    ) return false
+                    val path = op.imageUri.path.orEmpty().lowercase()
+                    if (path.endsWith(".gif") || path.endsWith(".mp4") ||
+                        path.endsWith(".mkv") || path.endsWith(".mov") ||
+                        path.endsWith(".3gp")
+                    ) return false
+                    if (op.startTimeMs != null || op.endTimeMs != null) hasTimedOverlay = true
+                }
+                is EditOperation.MirrorMain -> { }
                 else -> return false
             }
         }
+        // Timed overlays live in the source timeline: a trim or a
+        // speed change would shift them, so they stay on FFmpeg.
+        val trim = ops.filterIsInstance<EditOperation.Trim>().lastOrNull()
+        val hasEffectiveTrim = trim != null && (trim.startMs > 0L || trim.endMs > 0L)
+        if (hasTimedOverlay && (hasEffectiveTrim || speed != 1f)) return false
         if (canvasRatio != null && ops.any { it is EditOperation.Crop }) return false
         if (canvasRatio != null && canvasBg != null) {
             // Presentation only does a black background; a colour or
@@ -699,11 +754,13 @@ class VideoEditingViewModel : ViewModel() {
      * [supportsGpuExport] is false. The Activity fills in [outputPath]
      * (the service temp file) before starting ExportService. The last
      * Trim / SpeedMain / Crop op wins, matching how the editor commits
-     * them.
+     * them. [density] is the device density, used only to wrap subtitle
+     * lines the same way the FFmpeg path does.
      */
     fun buildGpuExportParams(
         sourceFilePath: String,
-        outputPath: String
+        outputPath: String,
+        density: Float = 2.75f
     ): com.tharunbirla.librecuts.services.GpuExportParams? {
         if (!supportsGpuExport(sourceFilePath)) return null
         val ops = _project.value?.operations ?: return null
@@ -713,6 +770,93 @@ class VideoEditingViewModel : ViewModel() {
         val ratio = ops.filterIsInstance<EditOperation.CanvasRatio>().lastOrNull()
             ?.takeIf { it.ratioValue != null }
         val bg = ops.filterIsInstance<EditOperation.CanvasBackground>().lastOrNull()
+        val mirror = ops.filterIsInstance<EditOperation.MirrorMain>().any { it.isMirrored }
+        val texts = ops.filterIsInstance<EditOperation.AddText>().map { op ->
+            // Anchors: a custom (dragged) position pins the text's
+            // centre at (relX, relY); an enum position pins the same
+            // corner/edge of the text box to the same point of the
+            // frame (no margin, matching drawtext's ffmpegParam).
+            val (relX, relY, anchorX, anchorY) = if (op.hasCustomPosition()) {
+                floatArrayOf(op.relativeX!!, op.relativeY!!, 0f, 0f)
+            } else when (op.position) {
+                EditOperation.TextPosition.BOTTOM_RIGHT -> floatArrayOf(1f, 1f, 1f, -1f)
+                EditOperation.TextPosition.TOP_RIGHT -> floatArrayOf(1f, 0f, 1f, 1f)
+                EditOperation.TextPosition.TOP_LEFT -> floatArrayOf(0f, 0f, -1f, 1f)
+                EditOperation.TextPosition.BOTTOM_LEFT -> floatArrayOf(0f, 1f, -1f, -1f)
+                EditOperation.TextPosition.CENTER_BOTTOM -> floatArrayOf(0.5f, 1f, 0f, -1f)
+                EditOperation.TextPosition.CENTER_TOP -> floatArrayOf(0.5f, 0f, 0f, 1f)
+                EditOperation.TextPosition.CENTER -> floatArrayOf(0.5f, 0.5f, 0f, 0f)
+                EditOperation.TextPosition.TOP_CENTER -> floatArrayOf(0.5f, 0f, 0f, 1f)
+                EditOperation.TextPosition.CENTER_LEFT -> floatArrayOf(0f, 0.5f, -1f, 0f)
+                EditOperation.TextPosition.CENTER_RIGHT -> floatArrayOf(1f, 0.5f, 1f, 0f)
+                EditOperation.TextPosition.BOTTOM_CENTER -> floatArrayOf(0.5f, 1f, 0f, -1f)
+            }
+            com.tharunbirla.librecuts.services.GpuTextSpec(
+                text = op.text,
+                fontSize = op.fontSize,
+                colorHex = op.color,
+                fontPath = op.fontPath,
+                borderThickness = op.borderThickness,
+                borderColorHex = op.borderColor,
+                align = op.textAlign,
+                lineSpacing = op.lineSpacing,
+                relX = relX,
+                relY = relY,
+                anchorX = anchorX,
+                anchorY = anchorY,
+                startMs = op.startTimeMs,
+                endMs = op.endTimeMs,
+                opacity = op.opacity
+            )
+        }
+        val subtitles = ops.filterIsInstance<EditOperation.AddSubtitles>().map { op ->
+            val align = when (op.position) {
+                EditOperation.TextPosition.TOP_LEFT,
+                EditOperation.TextPosition.CENTER_LEFT,
+                EditOperation.TextPosition.BOTTOM_LEFT -> "left"
+                EditOperation.TextPosition.TOP_RIGHT,
+                EditOperation.TextPosition.CENTER_RIGHT,
+                EditOperation.TextPosition.BOTTOM_RIGHT -> "right"
+                else -> "center"
+            }
+            com.tharunbirla.librecuts.services.GpuSubtitleSpec(
+                cues = op.cues.map { cue ->
+                    com.tharunbirla.librecuts.services.GpuSubtitleCue(
+                        startMs = cue.startTimeMs,
+                        endMs = cue.endTimeMs,
+                        text = getWrappedSubtitleLines(cue.text, op.fontSize, density)
+                            .joinToString("\n")
+                    )
+                },
+                fontSize = op.fontSize,
+                colorHex = op.color,
+                fontPath = op.fontPath,
+                positionName = op.position.name,
+                hasCustomPosition = op.hasCustomPosition(),
+                relX = op.relativeX ?: 0.5f,
+                relY = op.relativeY ?: 0.5f,
+                align = align
+            )
+        }
+        val images = ops.filterIsInstance<EditOperation.AddImageOverlay>().map { op ->
+            com.tharunbirla.librecuts.services.GpuImageSpec(
+                uri = op.imageUri.toString(),
+                relX = op.relativeX,
+                relY = op.relativeY,
+                relW = op.relativeWidth,
+                relH = op.relativeHeight,
+                rotationDeg = op.rotationAngle,
+                startMs = op.startTimeMs,
+                endMs = op.endTimeMs,
+                opacity = op.opacity
+            )
+        }
+        val overlaySpecs = com.tharunbirla.librecuts.services.GpuOverlaySpecs(
+            texts = texts,
+            subtitles = subtitles,
+            images = images,
+            mirror = mirror
+        )
         return com.tharunbirla.librecuts.services.GpuExportParams(
             sourcePath = sourceFilePath,
             outputPath = outputPath,
@@ -736,7 +880,12 @@ class VideoEditingViewModel : ViewModel() {
                     blurRadius = if (bg?.type == EditOperation.CanvasBackground.BackgroundType.BLUR) bg.blurRadius else 0,
                     scale = it.effectiveScale
                 )
-            }
+            },
+            texts = texts,
+            subtitles = subtitles,
+            images = images,
+            mirror = mirror,
+            overlaysJson = com.google.gson.Gson().toJson(overlaySpecs)
         )
     }
 
