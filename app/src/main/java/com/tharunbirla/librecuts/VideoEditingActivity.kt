@@ -178,6 +178,12 @@ class VideoEditingActivity : AppCompatActivity() {
     private var bgPreviewImageView: ImageView? = null
     private var lastActiveClipIndexForBlur: Int = 0
     private var currentBlurJob: Job? = null
+    // Cache key for the canvas-blur preview frame: clip + playhead second +
+    // bg type/radius. Repeated calls with the same key (the project observer
+    // fires on every edit, and the ratio preview calls this too) must NOT
+    // cancel and restart the frame fetch — that is what left the preview
+    // black: the job kept restarting and never finished.
+    private var lastBlurPreviewKey: String? = null
     
     private val activeExtractionUris = mutableSetOf<Uri>()
     private val frameExtractionSemaphore = kotlinx.coroutines.sync.Semaphore(2)
@@ -207,7 +213,8 @@ class VideoEditingActivity : AppCompatActivity() {
             when (intent?.action) {
                 com.tharunbirla.librecuts.services.ExportService.ACTION_EXPORT_PROGRESS -> {
                     val progress = intent.getIntExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_PROGRESS, 0)
-                    viewModel.updateExportProgress(progress)
+                    val encodedSecs = intent.getDoubleExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_ENCODED_SECS, 0.0)
+                    viewModel.updateExportProgress(progress, encodedSecs)
                 }
                 com.tharunbirla.librecuts.services.ExportService.ACTION_EXPORT_SUCCESS -> {
                     val uri = intent.getStringExtra(com.tharunbirla.librecuts.services.ExportService.EXTRA_SAVED_URI)
@@ -2158,6 +2165,16 @@ class VideoEditingActivity : AppCompatActivity() {
                     val progress = uiState.exportProgress
                     exportScreen.findViewById<TextView>(R.id.tvExportPercentage)?.text = "$progress%"
                     exportScreen.findViewById<android.widget.ProgressBar>(R.id.exportProgressBar)?.progress = progress
+                    // Show the encoded time under the %: for a 20-minute video the
+                    // % sits at 0 for a long time, so the moving time proves the
+                    // export is alive instead of looking stuck at "Starting".
+                    val totalSecs = getTotalSequenceDuration() / 1000.0
+                    val messageView = exportScreen.findViewById<TextView>(R.id.tvExportMessage)
+                    if (uiState.exportEncodedSecs > 0 && totalSecs > 0) {
+                        messageView?.text = "Encoded ${formatExportTime(uiState.exportEncodedSecs)} / ${formatExportTime(totalSecs)}"
+                    } else {
+                        messageView?.setText(R.string.str_please_don_t_close_the_app)
+                    }
                 } else {
                     val emptyStateVisible = findViewById<View>(R.id.emptyProjectState)?.visibility == View.VISIBLE
                     if (isImportLoading || (!isVideoLoaded && !emptyStateVisible)) {
@@ -4659,20 +4676,32 @@ class VideoEditingActivity : AppCompatActivity() {
     private fun updateCanvasBackgroundPreview(activeClipIndex: Int = lastActiveClipIndexForBlur) {
         val project = viewModel.project.value ?: return
         val bgOp = project.operations.filterIsInstance<EditOperation.CanvasBackground>().lastOrNull()
-        
-        bgPreviewImageView?.setImageBitmap(null)
-        bgPreviewImageView?.background = null
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            bgPreviewImageView?.setRenderEffect(null)
-        }
-        
+        // Keep the Color/Blur/Image buttons highlighted like CapCut does,
+        // so a tap is visibly registered even while the frame loads.
+        updateCanvasBackgroundUi(bgOp?.type)
+
         if (bgOp == null) {
-            bgPreviewImageView?.setBackgroundColor(android.graphics.Color.BLACK)
+            if (lastBlurPreviewKey != null) {
+                lastBlurPreviewKey = null
+                currentBlurJob?.cancel()
+                bgPreviewImageView?.setImageBitmap(null)
+                bgPreviewImageView?.background = null
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    bgPreviewImageView?.setRenderEffect(null)
+                }
+                bgPreviewImageView?.setBackgroundColor(android.graphics.Color.BLACK)
+            }
             return
         }
-        
+
         when (bgOp.type) {
             EditOperation.CanvasBackground.BackgroundType.COLOR -> {
+                lastBlurPreviewKey = null
+                currentBlurJob?.cancel()
+                bgPreviewImageView?.setImageBitmap(null)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    bgPreviewImageView?.setRenderEffect(null)
+                }
                 try {
                     val color = android.graphics.Color.parseColor(bgOp.colorHex)
                     bgPreviewImageView?.setBackgroundColor(color)
@@ -4682,26 +4711,46 @@ class VideoEditingActivity : AppCompatActivity() {
             }
             EditOperation.CanvasBackground.BackgroundType.BLUR -> {
                 val clipUri = getSequenceItems().getOrNull(activeClipIndex)?.uri ?: return
+                // Blur the frame the user is actually looking at (the
+                // playhead position), like CapCut — not always frame 0.
+                val posSec = (getGlobalPosition() / 1000L).coerceAtLeast(0L)
+                val key = "$clipUri|$posSec|BLUR|${bgOp.blurRadius}"
+                // Same frame as before: leave the visible bitmap alone.
+                // Restarting the fetch on every observer emission is what
+                // kept cancelling the job before it could finish.
+                if (key == lastBlurPreviewKey) return
+                lastBlurPreviewKey = key
                 currentBlurJob?.cancel()
                 currentBlurJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                     try {
-                        val path = getFilePathFromUri(clipUri)
-                        if (path != null) {
-                            val retriever = android.media.MediaMetadataRetriever()
-                            retriever.setDataSource(path)
-                            val bitmap = retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                            retriever.release()
-                            
-                            if (bitmap != null) {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    bgPreviewImageView?.setImageBitmap(bitmap)
-                                    bgPreviewImageView?.scaleType = ImageView.ScaleType.CENTER_CROP
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                        val radius = bgOp.blurRadius.toFloat()
-                                        bgPreviewImageView?.setRenderEffect(
-                                            android.graphics.RenderEffect.createBlurEffect(radius, radius, android.graphics.Shader.TileMode.CLAMP)
-                                        )
-                                    }
+                        val path = getFilePathFromUri(clipUri) ?: return@launch
+                        val retriever = android.media.MediaMetadataRetriever()
+                        retriever.setDataSource(path)
+                        val posUs = posSec * 1_000_000L
+                        // Fallbacks so a missing keyframe never leaves a black bg:
+                        // closest frame at the playhead, then frame 0, then mid-video.
+                        var bitmap = retriever.getFrameAtTime(posUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            ?: retriever.getFrameAtTime(posUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                            ?: retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        if (bitmap == null) {
+                            val durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                            if (durationMs > 0) {
+                                bitmap = retriever.getFrameAtTime(durationMs / 2 * 1000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            }
+                        }
+                        retriever.release()
+
+                        if (bitmap != null) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                // Only apply if this is still the latest request.
+                                if (lastBlurPreviewKey != key) return@withContext
+                                bgPreviewImageView?.setImageBitmap(bitmap)
+                                bgPreviewImageView?.scaleType = ImageView.ScaleType.CENTER_CROP
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    val radius = bgOp.blurRadius.toFloat()
+                                    bgPreviewImageView?.setRenderEffect(
+                                        android.graphics.RenderEffect.createBlurEffect(radius, radius, android.graphics.Shader.TileMode.CLAMP)
+                                    )
                                 }
                             }
                         }
@@ -4711,6 +4760,12 @@ class VideoEditingActivity : AppCompatActivity() {
                 }
             }
             EditOperation.CanvasBackground.BackgroundType.IMAGE -> {
+                lastBlurPreviewKey = null
+                currentBlurJob?.cancel()
+                bgPreviewImageView?.setImageBitmap(null)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    bgPreviewImageView?.setRenderEffect(null)
+                }
                 bgOp.imageUri?.let { uri ->
                     try {
                         val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -4725,6 +4780,33 @@ class VideoEditingActivity : AppCompatActivity() {
                         e.printStackTrace()
                     }
                 }
+            }
+        }
+    }
+
+    /** Highlight the active Canvas Background type (Color/Blur/Image), CapCut-style. */
+    private fun updateCanvasBackgroundUi(type: EditOperation.CanvasBackground.BackgroundType?) {
+        val toolbar = backgroundEditingToolbar ?: return
+        val buttons = mapOf(
+            EditOperation.CanvasBackground.BackgroundType.COLOR to R.id.btnBackgroundColor,
+            EditOperation.CanvasBackground.BackgroundType.BLUR to R.id.btnBackgroundBlur,
+            EditOperation.CanvasBackground.BackgroundType.IMAGE to R.id.btnBackgroundImage
+        )
+        buttons.forEach { (buttonType, id) ->
+            val btn = toolbar.findViewById<View>(id) ?: return@forEach
+            val isActive = buttonType == type
+            val frame = (btn as? android.view.ViewGroup)?.getChildAt(0)
+            frame?.setBackgroundResource(
+                if (isActive) R.drawable.bg_aspect_ratio_selected else R.drawable.bg_aspect_ratio_item
+            )
+            val icon = (frame as? android.view.ViewGroup)?.getChildAt(0) as? android.widget.ImageView
+            icon?.setColorFilter(
+                resources.getColor(if (isActive) R.color.onPrimaryContainer else R.color.iconSecondary, null)
+            )
+            val label = (btn as? android.view.ViewGroup)?.getChildAt(1) as? android.widget.TextView
+            label?.apply {
+                setTextColor(resources.getColor(if (isActive) R.color.colorOnPrimary else R.color.toolTextInactive, null))
+                paint.isFakeBoldText = isActive
             }
         }
     }
@@ -7997,6 +8079,12 @@ class VideoEditingActivity : AppCompatActivity() {
         val minutes = milliseconds / 60000
         val seconds = (milliseconds % 60000) / 1000
         return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+    }
+
+    /** mm:ss for an export progress readout (seconds as Double). */
+    private fun formatExportTime(secs: Double): String {
+        val total = secs.toLong().coerceAtLeast(0L)
+        return String.format(Locale.getDefault(), "%02d:%02d", total / 60, total % 60)
     }
 
     private fun showError(error: String) {

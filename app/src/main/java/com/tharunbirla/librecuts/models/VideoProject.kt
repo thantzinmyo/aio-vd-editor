@@ -139,6 +139,7 @@ data class VideoEditingUiState(
     val isLoading: Boolean = false,
     val isExporting: Boolean = false,
     val exportProgress: Int = 0, // 0-100
+    val exportEncodedSecs: Double = 0.0, // seconds of video encoded so far (proves the export is alive even while % is still 0)
     val errorMessage: String? = null,
     val pendingOperationCount: Int = 0,
     val currentPreviewOperationIndex: Int = -1, // -1 means show original, 0+ means after Nth operation

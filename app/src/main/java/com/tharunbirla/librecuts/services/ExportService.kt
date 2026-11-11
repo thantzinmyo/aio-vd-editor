@@ -40,6 +40,7 @@ class ExportService : Service() {
         const val ACTION_EXPORT_FAILURE = "com.tharunbirla.librecuts.ACTION_EXPORT_FAILURE"
 
         const val EXTRA_PROGRESS = "extra_progress"
+        const val EXTRA_ENCODED_SECS = "extra_encoded_secs"
         const val EXTRA_SAVED_URI = "extra_saved_uri"
         const val EXTRA_ERROR = "extra_error"
 
@@ -75,9 +76,9 @@ class ExportService : Service() {
                 val result = ffmpegEngine.exportFinal(
                     ffmpegCommand = command,
                     totalDurationSecs = durationSecs,
-                    onProgress = { progress ->
-                        updateNotification(progress, "Exporting...")
-                        broadcastProgress(progress)
+                    onProgress = { progress, encodedSecs ->
+                        updateNotification(progress, "Exporting...", encodedSecs, durationSecs)
+                        broadcastProgress(progress, encodedSecs)
                     }
                 )
 
@@ -136,7 +137,7 @@ class ExportService : Service() {
         }
     }
 
-    private fun buildNotification(progress: Int, title: String): Notification {
+    private fun buildNotification(progress: Int, title: String, encodedSecs: Double = 0.0, totalSecs: Double = 0.0): Notification {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -144,19 +145,33 @@ class ExportService : Service() {
             this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // While progress is still 0% (1% of a 20-minute video is 12 seconds
+        // of encoding), show the encoded time so the export doesn't look stuck.
+        val contentText = when {
+            progress > 0 && totalSecs > 0 -> "$progress% • ${formatTime(encodedSecs)} / ${formatTime(totalSecs)}"
+            encodedSecs > 0 && totalSecs > 0 -> "Encoding… ${formatTime(encodedSecs)} / ${formatTime(totalSecs)}"
+            progress > 0 -> "$progress%"
+            else -> "Starting..."
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText(if (progress > 0) "$progress%" else "Starting...")
+            .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_save_24)
-            .setProgress(100, progress, progress == 0)
+            .setProgress(100, progress, progress == 0 && encodedSecs <= 0.0)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
     }
 
-    private fun updateNotification(progress: Int, title: String) {
+    private fun updateNotification(progress: Int, title: String, encodedSecs: Double = 0.0, totalSecs: Double = 0.0) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(progress, title))
+        manager.notify(NOTIFICATION_ID, buildNotification(progress, title, encodedSecs, totalSecs))
+    }
+
+    private fun formatTime(secs: Double): String {
+        val total = secs.toLong().coerceAtLeast(0L)
+        return String.format(java.util.Locale.US, "%02d:%02d", total / 60, total % 60)
     }
 
     private fun showCompletionNotification(title: String, message: String, videoUri: Uri?) {
@@ -185,9 +200,10 @@ class ExportService : Service() {
         manager.notify(NOTIFICATION_ID + 1, notification)
     }
 
-    private fun broadcastProgress(progress: Int) {
+    private fun broadcastProgress(progress: Int, encodedSecs: Double = 0.0) {
         val intent = Intent(ACTION_EXPORT_PROGRESS).apply {
             putExtra(EXTRA_PROGRESS, progress)
+            putExtra(EXTRA_ENCODED_SECS, encodedSecs)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }

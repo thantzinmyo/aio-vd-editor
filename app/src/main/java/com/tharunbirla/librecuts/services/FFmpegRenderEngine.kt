@@ -271,7 +271,7 @@ class FFmpegRenderEngine(private val context: Context) {
     suspend fun exportFinal(
         ffmpegCommand: String,
         totalDurationSecs: Double? = null,
-        onProgress: ((Int) -> Unit)? = null,
+        onProgress: ((progress: Int, encodedSecs: Double) -> Unit)? = null,
         isRetry: Boolean = false
     ): RenderResult {
         return withContext(Dispatchers.IO) {
@@ -299,7 +299,10 @@ class FFmpegRenderEngine(private val context: Context) {
                             if (timeMs > 0) {
                                 val timeSecs = timeMs.toDouble() / 1000.0
                                 val progress = (timeSecs / totalDurationSecs * 100).toInt()
-                                onProgress?.invoke(progress.coerceIn(0, 100))
+                                // Pass the encoded seconds too: for a 20-minute video 1%
+                                // is 12 seconds of encoding, so the % alone sits at 0%
+                                // for minutes while FFmpeg is actually working.
+                                onProgress?.invoke(progress.coerceIn(0, 100), timeSecs)
                             }
                         }
                     })
