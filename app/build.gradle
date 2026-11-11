@@ -11,7 +11,11 @@ aboutLibraries {
 
 android {
     namespace 'com.tharunbirla.librecuts'
-    compileSdk 34
+    // compileSdk 35 (not 36): Media3 1.10+ needs 36, and this project's
+    // AGP 8.7.1 supports at most 35. targetSdk stays 34, so runtime
+    // behaviour is unchanged — compileSdk only decides which APIs the
+    // code may reference.
+    compileSdk 35
 
     androidResources {
         generateLocaleConfig = true
@@ -89,11 +93,14 @@ dependencies {
     implementation 'com.google.android.exoplayer:exoplayer-ui:2.19.1'
     // GPU export pipeline (Phase 1): Media3 Transformer — hardware decode
     // (MediaCodec) + OpenGL effects + hardware encode. Free, no account or
-    // key needed. 1.11.1 is the latest stable (setFrameRate, setSpeed and
-    // InAppMp4Muxer are all in). Kept alongside the old ExoPlayer 2.19.1
-    // preview player; migrating the preview to Media3 is a later cleanup.
-    implementation 'androidx.media3:media3-transformer:1.11.1'
-    implementation 'androidx.media3:media3-effect:1.11.1'
+    // key needed. 1.9.0 is the newest Media3 that works here: 1.10+ needs
+    // compileSdk 36, and this project's AGP 8.7.1 supports at most 35.
+    // 1.9.0 already has everything Phase 1 uses (setSpeed, setFrameRate —
+    // verified against the 1.9.0 AARs). Kept alongside the old ExoPlayer
+    // 2.19.1 preview player; migrating the preview to Media3 is a later
+    // cleanup.
+    implementation 'androidx.media3:media3-transformer:1.9.0'
+    implementation 'androidx.media3:media3-effect:1.9.0'
     implementation("com.antonkarpenko:ffmpeg-kit-full-gpl:2.1.0")
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'com.airbnb.android:lottie:3.4.0'
