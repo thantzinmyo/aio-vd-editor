@@ -257,18 +257,12 @@ class MainActivity : AppCompatActivity() {
             binding.tvAboutVersion.text = "v1.0-beta5"
         }
 
-        // Setup GitHub and Translation button listeners
-        binding.btnStarGithub.setBounceClickListener {
-            openUrl("https://github.com/tharunbirla/LibreCuts")
+        // AIO HUB PSM contact buttons (Telegram Channel + Admin)
+        binding.btnTelegramChannel.setBounceClickListener {
+            openUrl("https://t.me/aiohubpsmshop")
         }
-        binding.btnTranslate.setBounceClickListener {
-            openUrl("https://hosted.weblate.org/engage/librecuts/")
-        }
-        binding.btnReportBug.setBounceClickListener {
-            openUrl("https://github.com/tharunbirla/LibreCuts/issues")
-        }
-        binding.btnSponsor.setBounceClickListener {
-            openUrl("https://github.com/sponsors/tharunbirla")
+        binding.btnContactAdmin.setBounceClickListener {
+            openUrl("https://t.me/DoubleT2245")
         }
 
         // Onboarding / Welcome Dialog
@@ -828,20 +822,12 @@ class MainActivity : AppCompatActivity() {
             tvVersion.text = "Version 1.0-beta4"
         }
 
-        view.findViewById<View>(R.id.layoutStarGithub)?.setBounceClickListener {
-            openUrl("https://github.com/tharunbirla/LibreCuts")
+        view.findViewById<View>(R.id.layoutTelegramChannel)?.setBounceClickListener {
+            openUrl("https://t.me/aiohubpsmshop")
         }
 
-        view.findViewById<View>(R.id.layoutSponsorGithub)?.setBounceClickListener {
-            openUrl("https://github.com/sponsors/tharunbirla")
-        }
-
-        view.findViewById<View>(R.id.layoutDiscord)?.setBounceClickListener {
-            openUrl("https://discord.gg/gwr3nE7YW")
-        }
-
-        view.findViewById<View>(R.id.layoutTroubleshooting)?.setBounceClickListener {
-            openUrl("https://github.com/tharunbirla/LibreCuts/wiki/Error-Codes-&-Troubleshooting")
+        view.findViewById<View>(R.id.layoutContactAdmin)?.setBounceClickListener {
+            openUrl("https://t.me/DoubleT2245")
         }
 
         view.findViewById<View>(R.id.btnOnboardingGetStarted)?.setBounceClickListener {
@@ -859,6 +845,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkForUpdates() {
         showToast("Checking for updates in browser...")
-        openUrl("https://github.com/tharunbirla/LibreCuts/releases/latest")
+        openUrl("https://github.com/thantzinmyo/aio-vd-editor/releases/latest")
     }
 }
