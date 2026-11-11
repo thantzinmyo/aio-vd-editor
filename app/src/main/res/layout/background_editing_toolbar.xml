@@ -159,4 +159,152 @@
 
         </LinearLayout>
     </HorizontalScrollView>
+
+    <!-- CapCut-style blur strengths: tapping Blur shows four options, the
+         same background with increasing blur. The icon alpha hints at the
+         strength; the gold highlight marks the active one. -->
+    <LinearLayout
+        android:id="@+id/blurStrengthRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingTop="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/btnBlurLight"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/bgBlurLight"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_aspect_ratio_item">
+
+                <ImageView
+                    android:id="@+id/icBlurLight"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:alpha="0.4"
+                    android:src="@drawable/ic_opacity_24"
+                    app:tint="@color/iconSecondary" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/txtBlurLight"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/str_blur_light"
+                android:textColor="@color/toolTextInactive"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btnBlurMedium"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/bgBlurMedium"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_aspect_ratio_item">
+
+                <ImageView
+                    android:id="@+id/icBlurMedium"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:alpha="0.6"
+                    android:src="@drawable/ic_opacity_24"
+                    app:tint="@color/iconSecondary" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/txtBlurMedium"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/str_blur_medium"
+                android:textColor="@color/toolTextInactive"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btnBlurStrong"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/bgBlurStrong"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_aspect_ratio_item">
+
+                <ImageView
+                    android:id="@+id/icBlurStrong"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:alpha="0.8"
+                    android:src="@drawable/ic_opacity_24"
+                    app:tint="@color/iconSecondary" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/txtBlurStrong"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/str_blur_strong"
+                android:textColor="@color/toolTextInactive"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btnBlurMax"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/bgBlurMax"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_aspect_ratio_item">
+
+                <ImageView
+                    android:id="@+id/icBlurMax"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:alpha="1.0"
+                    android:src="@drawable/ic_opacity_24"
+                    app:tint="@color/iconSecondary" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/txtBlurMax"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/str_blur_max"
+                android:textColor="@color/toolTextInactive"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
 </LinearLayout>

@@ -184,6 +184,10 @@ class VideoEditingActivity : AppCompatActivity() {
     // cancel and restart the frame fetch — that is what left the preview
     // black: the job kept restarting and never finished.
     private var lastBlurPreviewKey: String? = null
+    // CapCut-style blur strengths (same background, increasing blur):
+    // Light / Medium / Strong / Max. These are the full-res-equivalent
+    // boxblur radii stored in the CanvasBackground op.
+    private val BLUR_STRENGTH_PRESETS = listOf(8, 14, 20, 25)
     
     private val activeExtractionUris = mutableSetOf<Uri>()
     private val frameExtractionSemaphore = kotlinx.coroutines.sync.Semaphore(2)
@@ -1970,11 +1974,37 @@ class VideoEditingActivity : AppCompatActivity() {
                     }
                 }
                 toolbar.findViewById<View>(R.id.btnBackgroundBlur)?.setBounceClickListener {
+                    // CapCut default: the first (lightest) of the four blur
+                    // strengths. If a blur is already set, keep its strength.
+                    val current = viewModel.project.value?.operations
+                        ?.filterIsInstance<EditOperation.CanvasBackground>()?.lastOrNull()
+                    val radius = if (current?.type == EditOperation.CanvasBackground.BackgroundType.BLUR) {
+                        current.blurRadius
+                    } else {
+                        BLUR_STRENGTH_PRESETS.first()
+                    }
                     viewModel.updateCanvasBackgroundOperation(
                         type = EditOperation.CanvasBackground.BackgroundType.BLUR,
-                        blurRadius = 25
+                        blurRadius = radius
                     )
                     updateCanvasBackgroundPreview()
+                }
+                // CapCut-style: four blur strengths, same background with
+                // increasing blur. Tapping one applies it immediately.
+                val blurStrengthButtons = mapOf(
+                    R.id.btnBlurLight to BLUR_STRENGTH_PRESETS[0],
+                    R.id.btnBlurMedium to BLUR_STRENGTH_PRESETS[1],
+                    R.id.btnBlurStrong to BLUR_STRENGTH_PRESETS[2],
+                    R.id.btnBlurMax to BLUR_STRENGTH_PRESETS[3]
+                )
+                blurStrengthButtons.forEach { (btnId, radius) ->
+                    toolbar.findViewById<View>(btnId)?.setBounceClickListener {
+                        viewModel.updateCanvasBackgroundOperation(
+                            type = EditOperation.CanvasBackground.BackgroundType.BLUR,
+                            blurRadius = radius
+                        )
+                        updateCanvasBackgroundPreview()
+                    }
                 }
                 toolbar.findViewById<View>(R.id.btnBackgroundImage)?.setBounceClickListener {
                     pickBackgroundImage()
@@ -4678,7 +4708,7 @@ class VideoEditingActivity : AppCompatActivity() {
         val bgOp = project.operations.filterIsInstance<EditOperation.CanvasBackground>().lastOrNull()
         // Keep the Color/Blur/Image buttons highlighted like CapCut does,
         // so a tap is visibly registered even while the frame loads.
-        updateCanvasBackgroundUi(bgOp?.type)
+        updateCanvasBackgroundUi(bgOp)
 
         if (bgOp == null) {
             if (lastBlurPreviewKey != null) {
@@ -4784,9 +4814,14 @@ class VideoEditingActivity : AppCompatActivity() {
         }
     }
 
-    /** Highlight the active Canvas Background type (Color/Blur/Image), CapCut-style. */
-    private fun updateCanvasBackgroundUi(type: EditOperation.CanvasBackground.BackgroundType?) {
+    /** Highlight the active Canvas Background type (Color/Blur/Image), CapCut-style.
+     * When Blur is active, also shows the four strength options and highlights
+     * the one closest to the stored radius. */
+    private fun updateCanvasBackgroundUi(bgOp: EditOperation.CanvasBackground?) {
         val toolbar = backgroundEditingToolbar ?: return
+        val type = bgOp?.type
+        toolbar.findViewById<View>(R.id.blurStrengthRow)?.visibility =
+            if (type == EditOperation.CanvasBackground.BackgroundType.BLUR) View.VISIBLE else View.GONE
         val buttons = mapOf(
             EditOperation.CanvasBackground.BackgroundType.COLOR to R.id.btnBackgroundColor,
             EditOperation.CanvasBackground.BackgroundType.BLUR to R.id.btnBackgroundBlur,
@@ -4807,6 +4842,28 @@ class VideoEditingActivity : AppCompatActivity() {
             label?.apply {
                 setTextColor(resources.getColor(if (isActive) R.color.colorOnPrimary else R.color.toolTextInactive, null))
                 paint.isFakeBoldText = isActive
+            }
+        }
+        if (type == EditOperation.CanvasBackground.BackgroundType.BLUR) {
+            val activeStrength = BLUR_STRENGTH_PRESETS.minByOrNull { Math.abs(it - (bgOp?.blurRadius ?: 0)) }
+            val strengthViews = listOf(
+                Triple(R.id.bgBlurLight, R.id.icBlurLight, R.id.txtBlurLight) to BLUR_STRENGTH_PRESETS[0],
+                Triple(R.id.bgBlurMedium, R.id.icBlurMedium, R.id.txtBlurMedium) to BLUR_STRENGTH_PRESETS[1],
+                Triple(R.id.bgBlurStrong, R.id.icBlurStrong, R.id.txtBlurStrong) to BLUR_STRENGTH_PRESETS[2],
+                Triple(R.id.bgBlurMax, R.id.icBlurMax, R.id.txtBlurMax) to BLUR_STRENGTH_PRESETS[3]
+            )
+            strengthViews.forEach { (views, radius) ->
+                val isActive = radius == activeStrength
+                toolbar.findViewById<View>(views.first)?.setBackgroundResource(
+                    if (isActive) R.drawable.bg_aspect_ratio_selected else R.drawable.bg_aspect_ratio_item
+                )
+                (toolbar.findViewById<View>(views.second) as? android.widget.ImageView)?.setColorFilter(
+                    resources.getColor(if (isActive) R.color.onPrimaryContainer else R.color.iconSecondary, null)
+                )
+                (toolbar.findViewById<View>(views.third) as? android.widget.TextView)?.apply {
+                    setTextColor(resources.getColor(if (isActive) R.color.colorOnPrimary else R.color.toolTextInactive, null))
+                    paint.isFakeBoldText = isActive
+                }
             }
         }
     }

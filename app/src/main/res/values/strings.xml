@@ -76,6 +76,10 @@
     <string name="str_3_4">3:4</string>
     <string name="str_5_8">5:8"</string>
     <string name="str_ratio_hint">Pinch to zoom • drag to move the video</string>
+    <string name="str_blur_light">Light</string>
+    <string name="str_blur_medium">Medium</string>
+    <string name="str_blur_strong">Strong</string>
+    <string name="str_blur_max">Max</string>
     <string name="str_custom">Custom</string>
     <string name="str_trim_video">Trim Video</string>
     <string name="str_transitions">Transitions</string>
